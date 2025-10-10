@@ -54,7 +54,6 @@ async fn main() -> Result<(), Error> {
         .arg(arg!("method-or-url": <METHOD_OR_URL> "The URL path (with an assumed GET method) OR the method if another argument is supplied"))
         .arg(arg!(url: [URL] "The URL path when a method is supplied"))
         .arg(arg!(body: [BODY] "The body of the HTTP request, if prefixed with a `@` it is treated as a file path"))
-        .arg(Arg::new("args").action(ArgAction::Append))
         .get_matches();
 
     match m.subcommand() {

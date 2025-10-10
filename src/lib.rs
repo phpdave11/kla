@@ -584,7 +584,10 @@ impl Template {
 
         let content = response.text().await?;
         match serde_json::from_str::<serde_json::Value>(&content) {
-            Ok(v) => context.extend(Context::from_value(v)?),
+            Ok(v) => match Context::from_value(v) {
+                Ok(v) => context.extend(v),
+                _ => (),
+            },
             _ => (),
         }
         context.insert("resp_body", &content);
