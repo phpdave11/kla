@@ -10,7 +10,7 @@ use http::Version;
 use reqwest::{
     header::{HeaderMap, HeaderName, HeaderValue},
     redirect::Policy,
-    Body, Certificate, ClientBuilder, RequestBuilder,
+    Body, Certificate, ClientBuilder, RequestBuilder, Response,
 };
 use std::str::FromStr;
 use std::{
@@ -436,7 +436,7 @@ impl Environment {
 pub struct TemplateBuilder {
     template: Option<Tera>,
     failure_template: Option<Tera>,
-    request: Option<RequestBuilder>,
+    response: Option<Response>,
     context: Option<Context>,
     output: Box<dyn std::io::Write>,
 }
@@ -446,7 +446,7 @@ impl TemplateBuilder {
         TemplateBuilder {
             template: None,
             failure_template: None,
-            request: None,
+            response: None,
             context: None,
             output,
         }
@@ -464,7 +464,7 @@ impl TemplateBuilder {
         TemplateBuilder {
             template: None,
             failure_template: None,
-            request: None,
+            response: None,
             context: None,
             output: Box::new(std::io::stdout()),
         }
@@ -475,7 +475,7 @@ impl TemplateBuilder {
         Ok(TemplateBuilder {
             template: None,
             failure_template: None,
-            request: None,
+            response: None,
             context: None,
             output: Box::new(file),
         })
@@ -485,7 +485,7 @@ impl TemplateBuilder {
         TemplateBuilder {
             template: None,
             failure_template: None,
-            request: None,
+            response: None,
             context: None,
             output: Box::new(std::io::Cursor::new(Vec::new())),
         }
@@ -522,8 +522,8 @@ impl TemplateBuilder {
         Ok(self)
     }
 
-    pub fn request(mut self, request: RequestBuilder) -> Self {
-        self.request = Some(request);
+    pub fn response(mut self, response: Response) -> Self {
+        self.response = Some(response);
         self
     }
 
@@ -531,8 +531,8 @@ impl TemplateBuilder {
         Ok(Template {
             template: self.template,
             failure_template: self.failure_template,
-            request: self.request.ok_or(Error::InvalidArguments(
-                "you must supply a request".to_owned(),
+            response: self.response.ok_or(Error::InvalidArguments(
+                "you must supply a response".to_owned(),
             ))?,
             output: self.output,
             context: self.context.unwrap_or(Context::new()),
@@ -544,21 +544,21 @@ pub struct Template {
     template: Option<Tera>,
     failure_template: Option<Tera>,
     output: Box<dyn std::io::Write>,
-    request: RequestBuilder,
+    response: Response,
     context: Context,
 }
 
+// TODO: what is the scope of this shit? This needs to be refactored
 impl Template {
     pub async fn send(self) -> Result<(), Error> {
         let Template {
             template,
             failure_template,
             mut output,
-            request,
+            response,
             mut context,
         } = self;
 
-        let response = request.send().await?;
         context.insert("resp_status", response.status().as_str());
 
         let headers = response.headers();

@@ -1,4 +1,4 @@
-use clap::{arg, command, Arg, ArgAction, ArgMatches, Command};
+use clap::{arg, command, ArgAction, ArgMatches, Command};
 use config::Config;
 use config::FileFormat;
 use http::Method;
@@ -16,10 +16,6 @@ async fn main() -> Result<(), Error> {
 
     let m = command!()
         .subcommand_required(false)
-        .subcommand(
-            new_run()
-            .allow_external_subcommands(true)
-        )
         .subcommand(
             Command::new("environments")
             .about("Show the environments that are available to you.")
@@ -58,7 +54,6 @@ async fn main() -> Result<(), Error> {
 
     match m.subcommand() {
         Some(("environments", envs)) => run_environments(envs, &conf),
-        Some(("run", _)) => run_run(&conf).await,
         _ => run_root(&m, &conf).await,
     }
 }
@@ -107,6 +102,7 @@ fn run_environments(args: &ArgMatches, conf: &Config) -> Result<(), Error> {
     Ok(())
 }
 
+// run_root will run the command with no arguments
 async fn run_root(args: &ArgMatches, conf: &Config) -> Result<(), Error> {
     let env = Environment::new(args.get_one("env"), conf);
 
@@ -124,56 +120,60 @@ async fn run_root(args: &ArgMatches, conf: &Config) -> Result<(), Error> {
 
     let url = env.create_url(uri);
 
+    let client = ClientBuilder::new()
+        .opt_header_agent(args.get_one("agent"))?
+        .gzip(
+            !args
+                .get_one::<bool>("no-gzip")
+                .map(|v| *v)
+                .unwrap_or_default(),
+        )
+        .brotli(
+            !args
+                .get_one::<bool>("no-brotli")
+                .map(|v| *v)
+                .unwrap_or_default(),
+        )
+        .deflate(
+            !args
+                .get_one::<bool>("no-deflate")
+                .map(|v| *v)
+                .unwrap_or_default(),
+        )
+        .connection_verbose(
+            args.get_one::<bool>("verbose")
+                .map(|v| *v)
+                .unwrap_or_default(),
+        )
+        .opt_max_redirects(args.get_one("max-redirects"))
+        .no_redirects(
+            args.get_one::<bool>("no-redirects")
+                .map(|v| *v)
+                .unwrap_or_default(),
+        )
+        .opt_proxy(args.get_one("proxy"), args.get_one("proxy-auth"))?
+        .opt_proxy_http(args.get_one("proxy-http"), args.get_one("proxy-auth"))?
+        .opt_proxy_https(args.get_one("proxy-https"), args.get_one("proxy-auth"))?
+        .opt_certificate(args.get_many("certificate"))?
+        .build()?;
+
+    let response = client
+        .request(method, url)
+        .opt_body(args.get_one("body"))?
+        .opt_headers(args.get_many("header"))?
+        .opt_bearer_auth(args.get_one("bearer-token"))
+        .opt_basic_auth(args.get_one("basic-auth"))
+        .opt_query(args.get_many("query"))?
+        .opt_form(args.get_many("form"))?
+        .opt_timeout(args.get_one("timeout"))?
+        .opt_version(args.get_one("http-version"))?
+        .send()
+        .await?;
+
     TemplateBuilder::new_opt_file(args.get_one("output"))?
         .opt_template(args.get_one("template"))?
         .opt_failure_template(args.get_one("failure-template"))?
-        .request(
-            ClientBuilder::new()
-                .opt_header_agent(args.get_one("agent"))?
-                .gzip(
-                    !args
-                        .get_one::<bool>("no-gzip")
-                        .map(|v| *v)
-                        .unwrap_or_default(),
-                )
-                .brotli(
-                    !args
-                        .get_one::<bool>("no-brotli")
-                        .map(|v| *v)
-                        .unwrap_or_default(),
-                )
-                .deflate(
-                    !args
-                        .get_one::<bool>("no-deflate")
-                        .map(|v| *v)
-                        .unwrap_or_default(),
-                )
-                .connection_verbose(
-                    args.get_one::<bool>("verbose")
-                        .map(|v| *v)
-                        .unwrap_or_default(),
-                )
-                .opt_max_redirects(args.get_one("max-redirects"))
-                .no_redirects(
-                    args.get_one::<bool>("no-redirects")
-                        .map(|v| *v)
-                        .unwrap_or_default(),
-                )
-                .opt_proxy(args.get_one("proxy"), args.get_one("proxy-auth"))?
-                .opt_proxy_http(args.get_one("proxy-http"), args.get_one("proxy-auth"))?
-                .opt_proxy_https(args.get_one("proxy-https"), args.get_one("proxy-auth"))?
-                .opt_certificate(args.get_many("certificate"))?
-                .build()?
-                .request(method, url)
-                .opt_body(args.get_one("body"))?
-                .opt_headers(args.get_many("header"))?
-                .opt_bearer_auth(args.get_one("bearer-token"))
-                .opt_basic_auth(args.get_one("basic-auth"))
-                .opt_query(args.get_many("query"))?
-                .opt_form(args.get_many("form"))?
-                .opt_timeout(args.get_one("timeout"))?
-                .opt_version(args.get_one("http-version"))?,
-        )
+        .response(response)
         .build()?
         .send()
         .await?;
