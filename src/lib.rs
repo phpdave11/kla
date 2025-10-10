@@ -10,7 +10,7 @@ use http::Version;
 use reqwest::{
     header::{HeaderMap, HeaderName, HeaderValue},
     redirect::Policy,
-    Body, Certificate, Client, ClientBuilder, Method, RequestBuilder,
+    Body, Certificate, ClientBuilder, RequestBuilder,
 };
 use std::str::FromStr;
 use std::{
@@ -186,64 +186,6 @@ impl KlaClientBuilder for ClientBuilder {
     }
 }
 
-pub trait KlaClient {
-    // args allows us to pass the raw arguments into the builder, which work as follows
-    //
-    //   if no arguments are supplied, we are going to make the request against the uri /
-    //
-    //   if one argument is supplied, it will be assigned to the uri, and the method will
-    //   be assumed to be GET.
-    //
-    //   if two arguments are supplied, they are assumed to be first the method, then the
-    //   uri.
-    //
-    //   if three arguments are supplied, they are assumed to be first the method, then
-    //   the uri, and finally the body. If the body begins with an @ it is assumed to be a
-    //   path to a file.
-    fn args<'a, T>(self, args: Option<T>, prefix: Option<&String>) -> Result<RequestBuilder, Error>
-    where
-        T: Iterator<Item = &'a String>;
-}
-
-impl KlaClient for Client {
-    fn args<'a, T>(self, args: Option<T>, prefix: Option<&String>) -> Result<RequestBuilder, Error>
-    where
-        T: Iterator<Item = &'a String>,
-    {
-        if let None = args {
-            return Ok(self.request(Method::GET, "/"));
-        }
-
-        let mut args = args.unwrap().map(|v| &v[..]);
-
-        let mut uri = args.next().unwrap_or("/");
-
-        let method = if let Some(arg2) = args.next() {
-            let method = Method::from_bytes(uri.to_uppercase().as_bytes());
-            uri = arg2;
-            method?
-        } else {
-            Method::GET
-        };
-
-        let mut url;
-        if let Some(prefix) = prefix {
-            url = String::from(prefix.trim_end_matches("/"));
-            url.push_str(uri);
-        } else {
-            url = String::from(uri)
-        }
-
-        let builder = self.request(method, url);
-
-        if let Some(body) = args.next() {
-            return builder.opt_body(Some(body));
-        }
-
-        Ok(builder)
-    }
-}
-
 // This allows us to extend the reqwest RequestBuilder so that we can pass data from clap
 // directly into it, creating a seamless interface. This implementation leaves the raw data
 // within clap, and greatly reduces the number of copies needed.
@@ -262,7 +204,7 @@ pub trait KlaRequestBuilder {
     where
         T: Iterator<Item = &'a String>;
 
-    fn opt_body<'a>(self, body: Option<&str>) -> Result<RequestBuilder, Error>;
+    fn opt_body<'a>(self, body: Option<&String>) -> Result<RequestBuilder, Error>;
 
     fn opt_basic_auth(self, userpass: Option<&String>) -> RequestBuilder;
 
@@ -327,7 +269,7 @@ impl KlaRequestBuilder for RequestBuilder {
         self.bearer_auth(token.unwrap())
     }
 
-    fn opt_body<'a>(self, body: Option<&'a str>) -> Result<RequestBuilder, Error> {
+    fn opt_body<'a>(self, body: Option<&String>) -> Result<RequestBuilder, Error> {
         if let None = body {
             return Ok(self);
         }
@@ -461,15 +403,33 @@ impl KlaRequestBuilder for RequestBuilder {
     }
 }
 
-pub fn environment(env: Option<&String>, config: &Config) -> Option<String> {
-    if let None = env {
-        return None;
-    }
-    let env = env.unwrap();
+pub struct Environment {
+    prefix: Option<String>,
+}
 
-    match config.get_string(format!("environment.{}.url", env).as_str()) {
-        Ok(v) => Some(v),
-        Err(_) => None,
+impl Environment {
+    pub fn new(env: Option<&String>, config: &Config) -> Environment {
+        let env = if let Some(env) = env {
+            env
+        } else {
+            return Environment { prefix: None };
+        };
+
+        Environment {
+            prefix: config
+                .get_string(format!("environment.{}.url", env).as_ref())
+                .ok(),
+        }
+    }
+
+    pub fn create_url(&self, uri: &str) -> String {
+        if let Some(prefix) = self.prefix.as_ref() {
+            let mut url = String::from(prefix.trim_end_matches("/"));
+            url.push_str(uri);
+            url
+        } else {
+            String::from(uri)
+        }
     }
 }
 

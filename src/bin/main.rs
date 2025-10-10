@@ -1,7 +1,9 @@
 use clap::{arg, command, Arg, ArgAction, ArgMatches, Command};
 use config::Config;
 use config::FileFormat;
-use kla::{Error, KlaClient, KlaClientBuilder, KlaRequestBuilder, OptionalFile, TemplateBuilder};
+use http::Method;
+use kla::Environment;
+use kla::{Error, KlaClientBuilder, KlaRequestBuilder, OptionalFile, TemplateBuilder};
 use regex::Regex;
 use reqwest::ClientBuilder;
 
@@ -27,28 +29,31 @@ async fn main() -> Result<(), Error> {
         .arg(arg!(--agent <AGENT> "The header agent string").default_value("TODO: make it good"))
         .arg(arg!(-e --env <ENVIRONMENT> "The environment we will run the request against").required(false))
         .arg(arg!(-t --template <TEMPLATE> "The template to use when formating the output. prepending with @ will read a file."))
-        .arg(arg!(-t --failure-template <TEMPLATE> "The template to use when formating the failure output. prepending with @ will read a file."))
+        .arg(arg!(--"failure-template" <TEMPLATE> "The template to use when formating the failure output. prepending with @ will read a file."))
         .arg(arg!(-o --output <FILE> "The file to write the output into"))
         .arg(arg!(--timeout <SECONDS> "The amount of time allotted for the request to finish"))
-        .arg(arg!(--basic-auth <BASIC_AUTH> "The username and password seperated by :, a preceding @ denotes a file path."))
-        .arg(arg!(--bearer-token <BEARER_TOKEN> "The bearer token to use in requests. A preceding @ denotes a file path."))
+        .arg(arg!(--"basic-auth" <BASIC_AUTH> "The username and password seperated by :, a preceding @ denotes a file path."))
+        .arg(arg!(--"bearer-token" <BEARER_TOKEN> "The bearer token to use in requests. A preceding @ denotes a file path."))
         .arg(arg!(-H --header <HEADER> "Specify a header The key and value should be seperated by a : (eg --header \"Content-Type: application/json\")").action(ArgAction::Append))
         .arg(arg!(-Q --query <QUERY> "Specify a query parameter The key and value should be seperated by a = (eg --query \"username=Jed\")").action(ArgAction::Append))
         .arg(arg!(-F --form <FORM> "Specify a form key=value to be passed in the form body").action(ArgAction::Append))
         .arg(arg!(-v --verbose "make it loud and proud").action(ArgAction::SetTrue))
         .arg(arg!(--dry "don't actually do anything, will automatically enable verbose").action(ArgAction::SetTrue))
-        .arg(arg!(--http-version <HTTP_VERSION> "The version of http to send the request as").value_parser(["0.9", "1.0", "1.1", "2.0", "3.0"]))
-        .arg(arg!(--no-gzip "Do not automatically uncompress gzip responses").action(ArgAction::SetTrue))
-        .arg(arg!(--no-brotli "Do not automatically uncompress brotli responses").action(ArgAction::SetTrue))
-        .arg(arg!(--no-deflate "Do not automatically uncompress deflate responses").action(ArgAction::SetTrue))
-        .arg(arg!(--max-redirects <NUMBER> "The number of redirects allowed"))
-        .arg(arg!(--no-redirects "Disable any redirects").action(ArgAction::SetTrue))
+        .arg(arg!(--"http-version" <HTTP_VERSION> "The version of http to send the request as").value_parser(["0.9", "1.0", "1.1", "2.0", "3.0"]))
+        .arg(arg!(--"no-gzip" "Do not automatically uncompress gzip responses").action(ArgAction::SetTrue))
+        .arg(arg!(--"no-brotli" "Do not automatically uncompress brotli responses").action(ArgAction::SetTrue))
+        .arg(arg!(--"no-deflate" "Do not automatically uncompress deflate responses").action(ArgAction::SetTrue))
+        .arg(arg!(--"max-redirects" <NUMBER> "The number of redirects allowed"))
+        .arg(arg!(--"no-redirects" "Disable any redirects").action(ArgAction::SetTrue))
         .arg(arg!(--proxy <PROXY> "The proxy to use for all requests."))
-        .arg(arg!(--proxy-http <PROXY_HTTP> "The proxy to use for http requests."))
-        .arg(arg!(--proxy-https <PROXY_HTTPS> "The proxy to use for https requests."))
-        .arg(arg!(--proxy-auth <PROXY_AUTH> "The username and password seperated by :."))
-        .arg(arg!(--connect-timeout <DURATION> "The amount of time to allow for connection"))
+        .arg(arg!(--"proxy-http" <PROXY_HTTP> "The proxy to use for http requests."))
+        .arg(arg!(--"proxy-https" <PROXY_HTTPS> "The proxy to use for https requests."))
+        .arg(arg!(--"proxy-auth" <PROXY_AUTH> "The username and password seperated by :."))
+        .arg(arg!(--"connect-timeout" <DURATION> "The amount of time to allow for connection"))
         .arg(arg!(--certificate <CERTIFICATE_FILE> "The path to the certificate to use for requests. Accepts PEM and DER, expects files to end in .der or .pem. defaults to pem").action(ArgAction::Append))
+        .arg(arg!("method-or-url": <METHOD_OR_URL> "The URL path (with an assumed GET method) OR the method if another argument is supplied"))
+        .arg(arg!(url: [URL] "The URL path when a method is supplied"))
+        .arg(arg!(body: [BODY] "The body of the HTTP request, if prefixed with a `@` it is treated as a file path"))
         .arg(Arg::new("args").action(ArgAction::Append))
         .get_matches();
 
@@ -104,7 +109,21 @@ fn run_environments(args: &ArgMatches, conf: &Config) -> Result<(), Error> {
 }
 
 async fn run_root(args: &ArgMatches, conf: &Config) -> Result<(), Error> {
-    let env = kla::environment(args.get_one("env"), conf);
+    let env = Environment::new(args.get_one("env"), conf);
+
+    let (uri, method) = if let Some(uri) = args.get_one::<String>("url") {
+        (
+            uri,
+            Method::from(args.get_one("method-or-url").expect("required")),
+        )
+    } else {
+        (
+            args.get_one("method-or-url").expect("required"),
+            Method::GET,
+        )
+    };
+
+    let url = env.create_url(uri);
 
     TemplateBuilder::new_opt_file(args.get_one("output"))?
         .opt_template(args.get_one("template"))?
@@ -137,7 +156,7 @@ async fn run_root(args: &ArgMatches, conf: &Config) -> Result<(), Error> {
                 )
                 .opt_max_redirects(args.get_one("max-redirects"))
                 .no_redirects(
-                    args.get_one::<bool>("no_redirects")
+                    args.get_one::<bool>("no-redirects")
                         .map(|v| *v)
                         .unwrap_or_default(),
                 )
@@ -146,7 +165,8 @@ async fn run_root(args: &ArgMatches, conf: &Config) -> Result<(), Error> {
                 .opt_proxy_https(args.get_one("proxy-https"), args.get_one("proxy-auth"))?
                 .opt_certificate(args.get_many("certificate"))?
                 .build()?
-                .args(args.get_many("args"), env.as_ref())?
+                .request(method, url)
+                .opt_body(args.get_one("body"))?
                 .opt_headers(args.get_many("header"))?
                 .opt_bearer_auth(args.get_one("bearer-token"))
                 .opt_basic_auth(args.get_one("basic-auth"))
