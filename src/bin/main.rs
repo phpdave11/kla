@@ -1,9 +1,9 @@
 use clap::{arg, command, ArgAction, ArgMatches, Command};
-use config::Config;
-use config::FileFormat;
+use config::{Config, FileFormat};
 use http::Method;
-use kla::Environment;
-use kla::{Error, KlaClientBuilder, KlaRequestBuilder, OptionalFile, TemplateBuilder};
+use kla::{
+    config::OptionalFile, Environment, Error, KlaClientBuilder, KlaRequestBuilder, TemplateBuilder,
+};
 use regex::Regex;
 use reqwest::ClientBuilder;
 
@@ -58,47 +58,45 @@ async fn main() -> Result<(), Error> {
     }
 }
 
-fn new_run() -> Command {
-    Command::new("run")
-        .about("run templates defined for the environment")
-        .alias("template")
-        .arg(
-            arg!(-e --env <ENVIRONMENT> "The environment we will run the request against")
-                .required(false),
-        )
-}
+// fn new_run() -> Command {
+//     Command::new("run")
+//         .about("run templates defined for the environment")
+//         .alias("template")
+//         .arg(
+//             arg!(-e --env <ENVIRONMENT> "The environment we will run the request against")
+//                 .required(false),
+//         )
+// }
 
-async fn run_run(_conf: &Config) -> Result<(), Error> {
-    // let env = kla::environment(args.get_one("env"), conf);
+// async fn run_run(_conf: &Config) -> Result<(), Error> {
+//     // let env = kla::environment(args.get_one("env"), conf);
 
-    let m = command!()
-        .subcommand(new_run().subcommand(Command::new("test").about(
-            "this is a test, it will run nothing and do nothing, because it is nothing, just like the rest of us... and you. NOTHING.",
-        )))
-        .get_matches();
+//     let m = command!()
+//         .subcommand(new_run().subcommand(Command::new("test").about(
+//             "this is a test, it will run nothing and do nothing, because it is nothing, just like the rest of us... and you. NOTHING.",
+//         )))
+//         .get_matches();
 
-    match m.subcommand() {
-        Some(("test", _)) => println!("test"),
-        _ => println!("no test"),
-    }
+//     match m.subcommand() {
+//         Some(("test", _)) => println!("test"),
+//         _ => println!("no test"),
+//     }
 
-    Ok(())
-}
+//     Ok(())
+// }
 
 fn run_environments(args: &ArgMatches, conf: &Config) -> Result<(), Error> {
     let r = Regex::new(args.get_one::<String>("regex").unwrap())?;
 
-    conf.get_table("environment")?
-        .iter()
-        .map(|(k, _)| k)
-        .filter(|k| r.is_match(k))
-        .for_each(|k| {
-            println!(
-                "{k} = {}",
-                conf.get_string(format!("environment.{k}.url").as_str())
-                    .unwrap_or_default()
-            )
-        });
+    let environments = conf
+        .get_table("environment")?
+        .into_iter()
+        .filter_map(|(k, v)| if r.is_match(&k) { Some((k, v)) } else { None });
+
+    for (k, v) in environments {
+        println!("{k} = {v}")
+    }
+
     Ok(())
 }
 
