@@ -29,6 +29,7 @@ async fn main() -> Result<(), Error> {
     }
 
     let m = command!()
+        .arg_required_else_help(true)
         .subcommand_required(false)
         .subcommand(
             Command::new("environments")
@@ -61,7 +62,7 @@ async fn main() -> Result<(), Error> {
         .arg(arg!(--"proxy-auth" <PROXY_AUTH> "The username and password seperated by :."))
         .arg(arg!(--"connect-timeout" <DURATION> "The amount of time to allow for connection"))
         .arg(arg!(--certificate <CERTIFICATE_FILE> "The path to the certificate to use for requests. Accepts PEM and DER, expects files to end in .der or .pem. defaults to pem").action(ArgAction::Append))
-        .arg(arg!("method-or-url": <METHOD_OR_URL> "The URL path (with an assumed GET method) OR the method if another argument is supplied"))
+        .arg(arg!("method-or-url": [METHOD_OR_URL] "The URL path (with an assumed GET method) OR the method if another argument is supplied"))
         .arg(arg!(url: [URL] "The URL path when a method is supplied"))
         .arg(arg!(body: [BODY] "The body of the HTTP request, if prefixed with a `@` it is treated as a file path"))
         .get_matches();
@@ -121,7 +122,12 @@ async fn run_root(args: &ArgMatches, conf: &Config) -> Result<(), Error> {
     let (uri, method) = if let Some(uri) = args.get_one::<String>("url") {
         (
             uri,
-            Method::from(args.get_one("method-or-url").expect("required")),
+            Method::try_from(
+                args.get_one::<String>("method-or-url")
+                    .expect("required")
+                    .to_uppercase()
+                    .as_str(),
+            )?,
         )
     } else {
         (

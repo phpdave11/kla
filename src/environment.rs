@@ -20,12 +20,23 @@ impl Environment {
     }
 
     pub fn create_url(&self, uri: &str) -> String {
-        if let Some(prefix) = self.prefix.as_ref() {
-            let mut url = String::from(prefix.trim_end_matches("/"));
-            url.push_str(uri);
-            url
+        // if there is no environment we should assume the value is the url
+        let prefix = if let Some(prefix) = self.prefix.as_ref() {
+            prefix
         } else {
-            String::from(uri)
+            return String::from(uri);
+        };
+
+        // if the uri starts with http or https scheme we assume the uri is
+        // a url
+        if uri.starts_with("http://") || uri.starts_with("https://") {
+            return String::from(uri);
         }
+
+        // we should return the prefix of the environment with the
+        // uri
+        let mut url = String::from(prefix.trim_end_matches("/"));
+        url.push_str(uri);
+        url
     }
 }
