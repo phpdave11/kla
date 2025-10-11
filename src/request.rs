@@ -12,7 +12,7 @@ use std::{
     time::Duration,
 };
 
-use crate::error::Error;
+use crate::{Error, Result};
 
 // This allows us to extend the reqwest RequestBuilder so that we can pass data from clap
 // directly into it, creating a seamless interface. This implementation leaves the raw data
@@ -20,31 +20,31 @@ use crate::error::Error;
 pub trait KlaRequestBuilder {
     // opt_headers takes the headers from the `--header` argument and applies them to the
     // request being created.
-    fn opt_headers<'a, T>(self, headers: Option<T>) -> Result<RequestBuilder, Error>
+    fn opt_headers<'a, T>(self, headers: Option<T>) -> Result<RequestBuilder>
     where
         T: Iterator<Item = &'a String>;
 
-    fn opt_query<'a, T>(self, headers: Option<T>) -> Result<RequestBuilder, Error>
+    fn opt_query<'a, T>(self, headers: Option<T>) -> Result<RequestBuilder>
     where
         T: Iterator<Item = &'a String>;
 
-    fn opt_form<'a, T>(self, form: Option<T>) -> Result<RequestBuilder, Error>
+    fn opt_form<'a, T>(self, form: Option<T>) -> Result<RequestBuilder>
     where
         T: Iterator<Item = &'a String>;
 
-    fn opt_body<'a>(self, body: Option<&String>) -> Result<RequestBuilder, Error>;
+    fn opt_body<'a>(self, body: Option<&String>) -> Result<RequestBuilder>;
 
     fn opt_basic_auth(self, userpass: Option<&String>) -> RequestBuilder;
 
     fn opt_bearer_auth(self, token: Option<&String>) -> RequestBuilder;
 
-    fn opt_timeout(self, timeout: Option<&String>) -> Result<RequestBuilder, Error>;
+    fn opt_timeout(self, timeout: Option<&String>) -> Result<RequestBuilder>;
 
-    fn opt_version(self, version: Option<&String>) -> Result<RequestBuilder, Error>;
+    fn opt_version(self, version: Option<&String>) -> Result<RequestBuilder>;
 }
 
 impl KlaRequestBuilder for RequestBuilder {
-    fn opt_version(self, version: Option<&String>) -> Result<RequestBuilder, Error> {
+    fn opt_version(self, version: Option<&String>) -> Result<RequestBuilder> {
         if let None = version {
             return Ok(self);
         }
@@ -63,7 +63,7 @@ impl KlaRequestBuilder for RequestBuilder {
         Ok(self.version(version))
     }
 
-    fn opt_timeout(self, timeout: Option<&String>) -> Result<RequestBuilder, Error> {
+    fn opt_timeout(self, timeout: Option<&String>) -> Result<RequestBuilder> {
         if let None = timeout {
             return Ok(self);
         }
@@ -97,7 +97,7 @@ impl KlaRequestBuilder for RequestBuilder {
         self.bearer_auth(token.unwrap())
     }
 
-    fn opt_body<'a>(self, body: Option<&String>) -> Result<RequestBuilder, Error> {
+    fn opt_body<'a>(self, body: Option<&String>) -> Result<RequestBuilder> {
         if let None = body {
             return Ok(self);
         }
@@ -123,7 +123,7 @@ impl KlaRequestBuilder for RequestBuilder {
         Ok(self.body(body))
     }
 
-    fn opt_query<'a, T>(self, query: Option<T>) -> Result<RequestBuilder, Error>
+    fn opt_query<'a, T>(self, query: Option<T>) -> Result<RequestBuilder>
     where
         T: Iterator<Item = &'a String>,
     {
@@ -153,12 +153,12 @@ impl KlaRequestBuilder for RequestBuilder {
 
                 Ok(())
             })
-            .collect::<Result<(), Error>>()?;
+            .collect::<Result<()>>()?;
 
         Ok(self.query(&map))
     }
 
-    fn opt_form<'a, T>(self, form: Option<T>) -> Result<RequestBuilder, Error>
+    fn opt_form<'a, T>(self, form: Option<T>) -> Result<RequestBuilder>
     where
         T: Iterator<Item = &'a String>,
     {
@@ -187,12 +187,12 @@ impl KlaRequestBuilder for RequestBuilder {
 
                 Ok(())
             })
-            .collect::<Result<(), Error>>()?;
+            .collect::<Result<()>>()?;
 
         Ok(self.form(&map))
     }
 
-    fn opt_headers<'a, T>(self, headers: Option<T>) -> Result<RequestBuilder, Error>
+    fn opt_headers<'a, T>(self, headers: Option<T>) -> Result<RequestBuilder>
     where
         T: Iterator<Item = &'a String>,
     {
@@ -225,7 +225,7 @@ impl KlaRequestBuilder for RequestBuilder {
 
                 Ok(())
             })
-            .collect::<Result<(), Error>>()?;
+            .collect::<Result<()>>()?;
 
         Ok(self.headers(map))
     }

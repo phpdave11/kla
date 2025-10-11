@@ -1,11 +1,17 @@
+use std::ffi::OsString;
+
 use clap::{arg, command, ArgAction, ArgMatches, Command};
 use config::{Config, FileFormat};
 use http::Method;
 use kla::{
-    config::OptionalFile, Environment, Error, KlaClientBuilder, KlaRequestBuilder, TemplateBuilder,
+    clap::DefaultValueIfSome, config::OptionalFile, ContextBuilder, Environment, Error,
+    KlaClientBuilder, KlaRequestBuilder, TemplateBuilder,
 };
 use regex::Regex;
 use reqwest::ClientBuilder;
+use tokio::sync::OnceCell;
+
+static DEFAULT_ENV: OnceCell<OsString> = OnceCell::const_new();
 
 #[tokio::main]
 async fn main() -> Result<(), Error> {
@@ -13,6 +19,14 @@ async fn main() -> Result<(), Error> {
         .add_source(OptionalFile::new("config.toml", FileFormat::Toml))
         .add_source(OptionalFile::new("/etc/kla/config.toml", FileFormat::Toml))
         .build()?;
+
+    // if the config file has a default environment we want to store it in a static
+    // variable so it can be used everywhere
+    if let Ok(default_environment) = conf.get_string("default.environment") {
+        DEFAULT_ENV
+            .get_or_init(|| async { OsString::from(default_environment) })
+            .await;
+    }
 
     let m = command!()
         .subcommand_required(false)
@@ -23,7 +37,7 @@ async fn main() -> Result<(), Error> {
             .arg(arg!(-r --regex <STATEMENT> "A regex statement").required(false).default_value(".*"))
         )
         .arg(arg!(--agent <AGENT> "The header agent string").default_value("TODO: make it good"))
-        .arg(arg!(-e --env <ENVIRONMENT> "The environment we will run the request against").required(false))
+        .arg(arg!(-e --env <ENVIRONMENT> "The environment we will run the request against").required(false).default_value_if_some(DEFAULT_ENV.get().map(|v| v.as_os_str())))
         .arg(arg!(-t --template <TEMPLATE> "The template to use when formating the output. prepending with @ will read a file."))
         .arg(arg!(--"failure-template" <TEMPLATE> "The template to use when formating the failure output. prepending with @ will read a file."))
         .arg(arg!(-o --output <FILE> "The file to write the output into"))
@@ -168,13 +182,21 @@ async fn run_root(args: &ArgMatches, conf: &Config) -> Result<(), Error> {
         .send()
         .await?;
 
+    let succeed = response.status().is_success();
+    let context = ContextBuilder::new()
+        .insert_response(response)
+        .await?
+        .build();
+
     TemplateBuilder::new_opt_file(args.get_one("output"))?
-        .opt_template(args.get_one("template"))?
-        .opt_failure_template(args.get_one("failure-template"))?
-        .response(response)
+        .context(context)
+        .opt_template(if succeed {
+            args.get_one("template")
+        } else {
+            args.get_one("failure-template")
+        })?
         .build()?
-        .send()
-        .await?;
+        .render()?;
 
     Ok(())
 }

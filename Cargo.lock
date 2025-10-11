@@ -935,7 +935,7 @@ dependencies = [
 
 [[package]]
 name = "kla"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "clap",
  "config",
@@ -944,6 +944,7 @@ dependencies = [
  "http",
  "regex",
  "reqwest",
+ "serde",
  "serde_json",
  "tera",
  "thiserror",

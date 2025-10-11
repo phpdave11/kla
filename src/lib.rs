@@ -10,4 +10,6 @@ pub use error::*;
 pub use request::*;
 pub use template::*;
 
+// extending the functionality of our dependancies
+pub mod clap;
 pub mod config;

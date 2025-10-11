@@ -1,5 +1,7 @@
 use std::convert::From;
 
+pub type Result<T> = std::result::Result<T, Error>;
+
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
     #[error("Invalid JSON Body")]

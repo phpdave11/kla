@@ -1,4 +1,4 @@
-use crate::error::Error;
+use crate::{Error, Result};
 
 use duration_string::DurationString;
 use reqwest::{header::HeaderValue, redirect::Policy, Certificate, ClientBuilder};
@@ -8,40 +8,36 @@ use std::{fs, path::Path, time::Duration};
 // KlaClientBuilder is a trait that adds additional functionality to the reqwest::ClientBuilder
 // object. These functions make it easier to marry the functionality with Clap
 pub trait KlaClientBuilder {
-    fn opt_header_agent<'a>(self, agent: Option<&'a String>) -> Result<ClientBuilder, Error>;
+    fn opt_header_agent<'a>(self, agent: Option<&'a String>) -> Result<ClientBuilder>;
 
     fn opt_max_redirects(self, redirects: Option<&usize>) -> ClientBuilder;
 
     fn no_redirects(self, no_redirects: bool) -> ClientBuilder;
 
-    fn opt_proxy(
-        self,
-        proxy: Option<&String>,
-        userpass: Option<&String>,
-    ) -> Result<ClientBuilder, Error>;
+    fn opt_proxy(self, proxy: Option<&String>, userpass: Option<&String>) -> Result<ClientBuilder>;
 
     fn opt_proxy_http(
         self,
         proxy: Option<&String>,
         userpass: Option<&String>,
-    ) -> Result<ClientBuilder, Error>;
+    ) -> Result<ClientBuilder>;
 
     fn opt_proxy_https(
         self,
         proxy: Option<&String>,
         userpass: Option<&String>,
-    ) -> Result<ClientBuilder, Error>;
+    ) -> Result<ClientBuilder>;
 
-    fn connect_timeout(self, timeout: Option<&String>) -> Result<ClientBuilder, Error>;
+    fn connect_timeout(self, timeout: Option<&String>) -> Result<ClientBuilder>;
 
-    fn opt_certificate<'a, T>(self, certificates: Option<T>) -> Result<ClientBuilder, Error>
+    fn opt_certificate<'a, T>(self, certificates: Option<T>) -> Result<ClientBuilder>
     where
         T: Iterator<Item = &'a String>;
 }
 
 // Implementation of the trait to extend ClientBuilder
 impl KlaClientBuilder for ClientBuilder {
-    fn opt_certificate<'a, T>(self, certificates: Option<T>) -> Result<ClientBuilder, Error>
+    fn opt_certificate<'a, T>(self, certificates: Option<T>) -> Result<ClientBuilder>
     where
         T: Iterator<Item = &'a String>,
     {
@@ -94,7 +90,7 @@ impl KlaClientBuilder for ClientBuilder {
         self.redirect(Policy::limited(*redirects))
     }
 
-    fn opt_header_agent<'a>(self, agent: Option<&'a String>) -> Result<ClientBuilder, Error> {
+    fn opt_header_agent<'a>(self, agent: Option<&'a String>) -> Result<ClientBuilder> {
         if let None = agent {
             return Ok(self);
         }
@@ -102,11 +98,7 @@ impl KlaClientBuilder for ClientBuilder {
         Ok(self.user_agent(agent))
     }
 
-    fn opt_proxy(
-        self,
-        proxy: Option<&String>,
-        userpass: Option<&String>,
-    ) -> Result<ClientBuilder, Error> {
+    fn opt_proxy(self, proxy: Option<&String>, userpass: Option<&String>) -> Result<ClientBuilder> {
         if let None = proxy {
             return Ok(self);
         }
@@ -125,7 +117,7 @@ impl KlaClientBuilder for ClientBuilder {
         self,
         proxy: Option<&String>,
         userpass: Option<&String>,
-    ) -> Result<ClientBuilder, Error> {
+    ) -> Result<ClientBuilder> {
         if let None = proxy {
             return Ok(self);
         }
@@ -144,7 +136,7 @@ impl KlaClientBuilder for ClientBuilder {
         self,
         proxy: Option<&String>,
         userpass: Option<&String>,
-    ) -> Result<ClientBuilder, Error> {
+    ) -> Result<ClientBuilder> {
         if let None = proxy {
             return Ok(self);
         }
@@ -158,7 +150,7 @@ impl KlaClientBuilder for ClientBuilder {
         Ok(self.proxy(proxy.basic_auth(parts.next().unwrap(), parts.next().unwrap_or_default())))
     }
 
-    fn connect_timeout(self, timeout: Option<&String>) -> Result<ClientBuilder, Error> {
+    fn connect_timeout(self, timeout: Option<&String>) -> Result<ClientBuilder> {
         if let None = timeout {
             return Ok(self);
         }
