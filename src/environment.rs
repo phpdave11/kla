@@ -35,8 +35,14 @@ impl Environment {
 
         // we should return the prefix of the environment with the
         // uri
-        let mut url = String::from(prefix.trim_end_matches("/"));
-        url.push_str(uri);
+        let mut url = if prefix.ends_with("/") {
+            String::from(prefix)
+        } else {
+            let mut url = String::from(prefix);
+            url.push_str("/");
+            url
+        };
+        url.push_str(uri.trim_start_matches("/"));
         url
     }
 }

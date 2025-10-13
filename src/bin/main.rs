@@ -1,11 +1,13 @@
+// use std::ffi::OsString;
+
 use std::ffi::OsString;
 
 use clap::{arg, command, ArgAction, ArgMatches, Command};
 use config::{Config, FileFormat};
 use http::Method;
 use kla::{
-    clap::DefaultValueIfSome, config::OptionalFile, ContextBuilder, Environment, Error,
-    KlaClientBuilder, KlaRequestBuilder, TemplateBuilder,
+    clap::DefaultValueIfSome, config::OptionalFile, Environment, Error, KlaClientBuilder,
+    KlaRequestBuilder, OutputBuilder,
 };
 use regex::Regex;
 use reqwest::ClientBuilder;
@@ -37,7 +39,7 @@ async fn main() -> Result<(), Error> {
             .alias("envs")
             .arg(arg!(-r --regex <STATEMENT> "A regex statement").required(false).default_value(".*"))
         )
-        .arg(arg!(--agent <AGENT> "The header agent string").default_value("TODO: make it good"))
+        .arg(arg!(--agent <AGENT> "The header agent string").default_value("kla"))
         .arg(arg!(-e --env <ENVIRONMENT> "The environment we will run the request against").required(false).default_value_if_some(DEFAULT_ENV.get().map(|v| v.as_os_str())))
         .arg(arg!(-t --template <TEMPLATE> "The template to use when formating the output. prepending with @ will read a file."))
         .arg(arg!(--"failure-template" <TEMPLATE> "The template to use when formating the failure output. prepending with @ will read a file."))
@@ -189,20 +191,19 @@ async fn run_root(args: &ArgMatches, conf: &Config) -> Result<(), Error> {
         .await?;
 
     let succeed = response.status().is_success();
-    let context = ContextBuilder::new()
-        .insert_response(response)
-        .await?
-        .build();
 
-    TemplateBuilder::new_opt_file(args.get_one("output"))?
-        .context(context)
+    OutputBuilder::new(response)
         .opt_template(if succeed {
             args.get_one("template")
         } else {
             args.get_one("failure-template")
-        })?
-        .build()?
-        .render()?;
+        })
+        .opt_output(args.get_one("output"))
+        .await?
+        .build()
+        .await?
+        .output()
+        .await?;
 
     Ok(())
 }

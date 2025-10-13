@@ -1,8 +1,9 @@
 use http::Version;
 use reqwest::Response;
 use serde::ser::Serialize;
-use std::fs;
+use std::{fs, pin::Pin};
 use tera::{Context, Tera};
+use tokio::io::AsyncWriteExt;
 
 use crate::Result;
 
@@ -61,11 +62,11 @@ impl ContextBuilder {
 pub struct TemplateBuilder {
     template: Option<Tera>,
     context: Option<Context>,
-    output: Box<dyn std::io::Write>,
+    output: Pin<Box<dyn tokio::io::AsyncWrite>>,
 }
 
 impl TemplateBuilder {
-    pub fn new(output: Box<dyn std::io::Write>) -> TemplateBuilder {
+    pub fn new(output: Pin<Box<dyn tokio::io::AsyncWrite>>) -> TemplateBuilder {
         TemplateBuilder {
             template: None,
             context: None,
@@ -73,28 +74,28 @@ impl TemplateBuilder {
         }
     }
 
-    pub fn new_opt_file(path: Option<&String>) -> Result<TemplateBuilder> {
+    pub async fn new_opt_file(path: Option<&String>) -> Result<TemplateBuilder> {
         if let None = path {
             return Ok(TemplateBuilder::new_stdout());
         }
 
-        Ok(TemplateBuilder::new_file(path.unwrap())?)
+        Ok(TemplateBuilder::new_file(path.unwrap()).await?)
     }
 
     pub fn new_stdout() -> TemplateBuilder {
         TemplateBuilder {
             template: None,
             context: None,
-            output: Box::new(std::io::stdout()),
+            output: Box::pin(tokio::io::stdout()),
         }
     }
 
-    pub fn new_file(path: &str) -> Result<TemplateBuilder> {
-        let file = std::fs::File::create(path)?;
+    pub async fn new_file(path: &str) -> Result<TemplateBuilder> {
+        let file = tokio::fs::File::create(path).await?;
         Ok(TemplateBuilder {
             template: None,
             context: None,
-            output: Box::new(file),
+            output: Box::pin(file),
         })
     }
 
@@ -102,37 +103,34 @@ impl TemplateBuilder {
         TemplateBuilder {
             template: None,
             context: None,
-            output: Box::new(std::io::Cursor::new(Vec::new())),
+            output: Box::pin(std::io::Cursor::new(Vec::new())),
         }
     }
 
-    fn default_template() -> Tera {
-        let mut tera = Tera::default();
-        tera.add_raw_template("template", "{{ resp_body }}")
-            .expect("Be good enough not to embed a broken template ok?");
-        tera
+    pub fn opt_template(self, template: Option<&String>) -> Result<Self> {
+        if let Some(template) = template {
+            self.template(template)
+        } else {
+            Ok(self)
+        }
     }
 
-    pub fn opt_template(mut self, template: Option<&String>) -> Result<Self> {
-        let template = if let Some(template) = template {
-            template
-        } else {
-            self.template = Some(Self::default_template());
-            return Ok(self);
-        };
-
+    pub fn template(mut self, template: &str) -> Result<Self> {
         let mut tera = Tera::default();
         let mut chars = template.chars();
 
-        match chars.next() {
+        self.template = match chars.next() {
             Some('@') => {
                 let content = fs::read_to_string(chars.as_str())?;
-                tera.add_raw_template("template", &content)
+                tera.add_raw_template("template", &content)?;
+                Some(tera)
             }
-            Some(_) => tera.add_raw_template("template", template),
-            None => tera.add_raw_template("template", "{{ resp_body }}"),
-        }?;
-        self.template = Some(tera);
+            Some(_) => {
+                tera.add_raw_template("template", template)?;
+                Some(tera)
+            }
+            None => None,
+        };
 
         Ok(self)
     }
@@ -144,7 +142,7 @@ impl TemplateBuilder {
 
     pub fn build(self) -> Result<Template> {
         Ok(Template {
-            template: self.template.unwrap_or_else(|| Self::default_template()),
+            template: self.template.unwrap_or_default(),
             output: self.output,
             context: self.context.unwrap_or_else(|| Context::new()),
         })
@@ -153,19 +151,20 @@ impl TemplateBuilder {
 
 pub struct Template {
     template: Tera,
-    output: Box<dyn std::io::Write>,
+    output: Pin<Box<dyn tokio::io::AsyncWrite>>,
     context: Context,
 }
 
 impl Template {
-    pub fn render(self) -> Result<()> {
+    pub async fn render(self) -> Result<()> {
         let Template {
             template,
             mut output,
             context,
         } = self;
 
-        template.render_to("template", &context, &mut output)?;
+        let template = template.render("template", &context)?;
+        output.as_mut().write_all(template.as_bytes()).await?;
 
         Ok(())
     }
