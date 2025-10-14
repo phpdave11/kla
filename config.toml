@@ -3,9 +3,12 @@ environment = "poetry"
 
 [environment.github]
 url = "https://api.github.com/"
+short_description = "Github api"
 
 [environment.bored]
 url = "https://www.boredapi.com/api"
+short_description = "An API giving you ideas for when you are bored"
 
 [environment.poetry]
 url = "https://poetrydb.org/"
+short_description = "Poetry by authors"

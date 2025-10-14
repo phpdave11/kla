@@ -1,16 +1,17 @@
 // use std::ffi::OsString;
 
-use std::ffi::OsString;
+use std::{ffi::OsString, sync::Arc};
 
 use clap::{arg, command, ArgAction, ArgMatches, Command};
 use config::{Config, FileFormat};
 use http::Method;
 use kla::{
-    clap::DefaultValueIfSome, config::OptionalFile, Environment, Error, KlaClientBuilder,
+    clap::DefaultValueIfSome, config::OptionalFile, Endpoint, Environment, Error, KlaClientBuilder,
     KlaRequestBuilder, OutputBuilder,
 };
 use regex::Regex;
 use reqwest::ClientBuilder;
+use skim::{prelude::SkimOptionsBuilder, Skim, SkimItem};
 use tokio::sync::OnceCell;
 
 static DEFAULT_ENV: OnceCell<OsString> = OnceCell::const_new();
@@ -38,6 +39,12 @@ async fn main() -> Result<(), Error> {
             .about("Show the environments that are available to you.")
             .alias("envs")
             .arg(arg!(-r --regex <STATEMENT> "A regex statement").required(false).default_value(".*"))
+        )
+        .subcommand(
+            Command::new("switch")
+            .about("Select an environment to be the current context")
+            .alias("context")
+            .arg(arg!(matcher: [Matcher] "A regex statement to filter down matches").required(false).default_value(".*"))
         )
         .arg(arg!(--agent <AGENT> "The header agent string").default_value("kla"))
         .arg(arg!(-e --env <ENVIRONMENT> "The environment we will run the request against").required(false).default_value_if_some(DEFAULT_ENV.get().map(|v| v.as_os_str())))
@@ -71,6 +78,7 @@ async fn main() -> Result<(), Error> {
 
     match m.subcommand() {
         Some(("environments", envs)) => run_environments(envs, &conf),
+        Some(("switch", envs)) => run_switch(envs, &conf),
         _ => run_root(&m, &conf).await,
     }
 }
@@ -117,9 +125,41 @@ fn run_environments(args: &ArgMatches, conf: &Config) -> Result<(), Error> {
     Ok(())
 }
 
+fn run_switch(args: &ArgMatches, conf: &Config) -> Result<(), Error> {
+    let (send, recv) = crossbeam_channel::unbounded();
+    let r = Regex::new(args.get_one::<String>("matcher").unwrap())?;
+
+    let environments = conf
+        .get_table("environment")?
+        .into_iter()
+        .filter_map(|(k, v)| if r.is_match(&k) { Some((k, v)) } else { None });
+
+    for (name, val) in environments {
+        let mut endpoint: Endpoint = val.try_deserialize()?;
+        endpoint.name = name;
+        let endpoint: Arc<dyn SkimItem> = Arc::new(endpoint);
+        send.send(endpoint).unwrap();
+    }
+
+    let options = SkimOptionsBuilder::default()
+        .preview(Some(String::from("right")))
+        .build()?;
+
+    let selected = Skim::run_with(&options, Some(recv))
+        .filter(|f| !f.is_abort)
+        .map(|v| v.selected_items)
+        .into_iter()
+        .flatten()
+        .next()
+        .map(|v| v.text().to_string());
+
+    println!("{:?}", selected);
+    Ok(())
+}
+
 // run_root will run the command with no arguments
 async fn run_root(args: &ArgMatches, conf: &Config) -> Result<(), Error> {
-    let env = Environment::new(args.get_one("env"), conf);
+    let env = Environment::new(args.get_one("env"), conf)?;
 
     let (uri, method) = if let Some(uri) = args.get_one::<String>("url") {
         (
