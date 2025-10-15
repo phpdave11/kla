@@ -1,5 +1,8 @@
+# Sets default values for kla. These are used when not provided via flags
 [default]
-environment = "poetry"
+# sets the --env flag by default. This value is actually a file since the `switch`
+# subcommand can change this value to switch contexts.
+environment = ".default-environment"
 
 [environment.github]
 url = "https://api.github.com/"

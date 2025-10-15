@@ -1,6 +1,6 @@
 // use std::ffi::OsString;
 
-use std::{ffi::OsString, sync::Arc};
+use std::{ffi::OsString, fs, sync::Arc};
 
 use clap::{arg, command, ArgAction, ArgMatches, Command};
 use config::{Config, FileFormat};
@@ -21,11 +21,15 @@ async fn main() -> Result<(), Error> {
     let conf = Config::builder()
         .add_source(OptionalFile::new("config.toml", FileFormat::Toml))
         .add_source(OptionalFile::new("/etc/kla/config.toml", FileFormat::Toml))
+        .set_default("default.environment", "/etc/kla/.default-environment")?
         .build()?;
 
     // if the config file has a default environment we want to store it in a static
     // variable so it can be used everywhere
-    if let Ok(default_environment) = conf.get_string("default.environment") {
+    if let Ok(default_environment) = fs::read_to_string(
+        conf.get_string("default.environment")
+            .expect("default value"),
+    ) {
         DEFAULT_ENV
             .get_or_init(|| async { OsString::from(default_environment) })
             .await;
@@ -153,7 +157,14 @@ fn run_switch(args: &ArgMatches, conf: &Config) -> Result<(), Error> {
         .next()
         .map(|v| v.text().to_string());
 
-    println!("{:?}", selected);
+    if let Some(selected) = selected {
+        fs::write(
+            conf.get_string("default.environment")
+                .expect("default value"),
+            selected,
+        )?;
+    }
+
     Ok(())
 }
 
