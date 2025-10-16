@@ -1,12 +1,17 @@
 use std::{
     borrow::Cow,
     fmt::{Display, Write},
+    path::PathBuf,
 };
 
-use config::{Config, ConfigError};
+use clap::{command, Command};
+use config::{builder::DefaultState, Config, ConfigBuilder, File};
 use serde::Deserialize;
 use skim::SkimItem;
 
+use crate::{Error, Result};
+
+#[derive(Debug)]
 pub enum Environment {
     Endpoint(Endpoint),
     Empty,
@@ -28,7 +33,7 @@ impl Display for Environment {
 }
 
 impl Environment {
-    pub fn new(env: Option<&String>, config: &Config) -> Result<Environment, ConfigError> {
+    pub fn new(env: Option<&String>, config: &Config) -> Result<Environment> {
         if let Some(env) = env {
             Ok(Environment::Endpoint(Endpoint::new(env.clone(), config)?))
         } else {
@@ -44,7 +49,7 @@ impl Environment {
     }
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Debug)]
 pub struct Endpoint {
     #[serde(skip)]
     pub name: String,
@@ -57,10 +62,13 @@ pub struct Endpoint {
 
     #[serde(rename = "long_description")]
     long_description: Option<String>,
+
+    #[serde(rename = "template_dir")]
+    template_dir: Option<String>,
 }
 
 impl Endpoint {
-    pub fn new<S>(env: S, config: &Config) -> Result<Endpoint, ConfigError>
+    pub fn new<S>(env: S, config: &Config) -> Result<Endpoint>
     where
         S: Into<String>,
     {
@@ -120,5 +128,34 @@ impl SkimItem for Endpoint {
         }
 
         skim::ItemPreview::Text(s)
+    }
+}
+
+pub trait FromEnvironment {
+    type Output;
+
+    fn add_source_environment(self, env: &crate::Environment, tmpl: &str) -> Result<Self::Output>;
+}
+
+impl FromEnvironment for ConfigBuilder<DefaultState> {
+    type Output = Self;
+
+    fn add_source_environment(self, env: &Environment, tmpl: &str) -> Result<Self::Output> {
+        let environment = match env {
+            Environment::Empty => return Err(Error::KlaError(String::from("no environment set"))),
+            Environment::Endpoint(endpoint) => endpoint,
+        };
+
+        let template_dir = match environment.template_dir.as_ref() {
+            Some(val) => val,
+            None => return Err(Error::KlaError(String::from("no template directory set"))),
+        };
+
+        let mut template = PathBuf::from(template_dir);
+        template.push(tmpl);
+
+        Ok(self.add_source(File::with_name(
+            template.as_path().to_str().expect("bad path"),
+        )))
     }
 }

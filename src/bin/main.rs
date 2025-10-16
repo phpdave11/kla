@@ -3,11 +3,11 @@
 use std::{ffi::OsString, fs, sync::Arc};
 
 use clap::{arg, command, ArgAction, ArgMatches, Command};
-use config::{Config, FileFormat};
+use config::{Config, File, FileFormat};
 use http::Method;
 use kla::{
-    clap::DefaultValueIfSome, config::OptionalFile, Endpoint, Environment, Error, KlaClientBuilder,
-    KlaRequestBuilder, OutputBuilder,
+    clap::DefaultValueIfSome, config::OptionalFile, Endpoint, Environment, Error, FromEnvironment,
+    KlaClientBuilder, KlaRequestBuilder, OutputBuilder,
 };
 use regex::Regex;
 use reqwest::ClientBuilder;
@@ -38,18 +38,6 @@ async fn main() -> Result<(), Error> {
     let m = command!()
         .arg_required_else_help(true)
         .subcommand_required(false)
-        .subcommand(
-            Command::new("environments")
-            .about("Show the environments that are available to you.")
-            .alias("envs")
-            .arg(arg!(-r --regex <STATEMENT> "A regex statement").required(false).default_value(".*"))
-        )
-        .subcommand(
-            Command::new("switch")
-            .about("Select an environment to be the current context")
-            .alias("context")
-            .arg(arg!(matcher: [Matcher] "A regex statement to filter down matches").required(false).default_value(".*"))
-        )
         .arg(arg!(--agent <AGENT> "The header agent string").default_value("kla"))
         .arg(arg!(-e --env <ENVIRONMENT> "The environment we will run the request against").required(false).default_value_if_some(DEFAULT_ENV.get().map(|v| v.as_os_str())))
         .arg(arg!(-t --template <TEMPLATE> "The template to use when formating the output. prepending with @ will read a file."))
@@ -78,41 +66,66 @@ async fn main() -> Result<(), Error> {
         .arg(arg!("method-or-url": [METHOD_OR_URL] "The URL path (with an assumed GET method) OR the method if another argument is supplied"))
         .arg(arg!(url: [URL] "The URL path when a method is supplied"))
         .arg(arg!(body: [BODY] "The body of the HTTP request, if prefixed with a `@` it is treated as a file path"))
+        .subcommand(
+            Command::new("environments")
+            .about("Show the environments that are available to you.")
+            .alias("envs")
+            .arg(arg!(-r --regex <STATEMENT> "A regex statement").required(false).default_value(".*"))
+        )
+        .subcommand(
+            Command::new("switch")
+            .about("Select an environment to be the current context")
+            .alias("context")
+            .arg(arg!(matcher: [Matcher] "A regex statement to filter down matches").required(false).default_value(".*"))
+        )
+        .subcommand(
+            Command::new("run")
+            .about("run templates defined for the environment")
+            .alias("template")
+            .arg(arg!(template: [template] "The template you want to run"))
+            .arg(arg!([args] ... "Any arguments for the template").trailing_var_arg(true).allow_hyphen_values(true))
+        )
         .get_matches();
 
     match m.subcommand() {
         Some(("environments", envs)) => run_environments(envs, &conf),
         Some(("switch", envs)) => run_switch(envs, &conf),
+        Some(("run", envs)) => run_run(envs.get_one::<String>("template"), &m, &conf).await,
         _ => run_root(&m, &conf).await,
     }
 }
 
-// fn new_run() -> Command {
-//     Command::new("run")
-//         .about("run templates defined for the environment")
-//         .alias("template")
-//         .arg(
-//             arg!(-e --env <ENVIRONMENT> "The environment we will run the request against")
-//                 .required(false),
-//         )
-// }
+async fn run_run<S: Into<String>>(
+    template: Option<S>,
+    args: &ArgMatches,
+    conf: &Config,
+) -> Result<(), Error> {
+    let template: String = if let Some(template) = template {
+        template.into()
+    } else {
+        return run_run_empty(args, conf);
+    };
 
-// async fn run_run(_conf: &Config) -> Result<(), Error> {
-//     // let env = kla::environment(args.get_one("env"), conf);
+    let env = Environment::new(args.get_one("env"), conf)?;
 
-//     let m = command!()
-//         .subcommand(new_run().subcommand(Command::new("test").about(
-//             "this is a test, it will run nothing and do nothing, because it is nothing, just like the rest of us... and you. NOTHING.",
-//         )))
-//         .get_matches();
+    let tmpl_conf = Config::builder()
+        .add_source_environment(&env, &template)?
+        .build()?;
 
-//     match m.subcommand() {
-//         Some(("test", _)) => println!("test"),
-//         _ => println!("no test"),
-//     }
+    command!().subcommand(
+        Command::new("run")
+            .about("run templates defined for the environment")
+            .alias("template")
+            .subcommand(tmpl_conf.as_command()?),
+    );
 
-//     Ok(())
-// }
+    println!("{:?}, {:?}", template, env);
+    Ok(())
+}
+
+fn run_run_empty(_args: &ArgMatches, _conf: &Config) -> Result<(), Error> {
+    todo!()
+}
 
 fn run_environments(args: &ArgMatches, conf: &Config) -> Result<(), Error> {
     let r = Regex::new(args.get_one::<String>("regex").unwrap())?;
@@ -123,7 +136,9 @@ fn run_environments(args: &ArgMatches, conf: &Config) -> Result<(), Error> {
         .filter_map(|(k, v)| if r.is_match(&k) { Some((k, v)) } else { None });
 
     for (k, v) in environments {
-        println!("{k} = {v}")
+        let mut env: Endpoint = v.try_deserialize()?;
+        env.name = k;
+        println!("{}", env);
     }
 
     Ok(())

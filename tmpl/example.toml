@@ -1,0 +1,8 @@
+short_description = "An example of a template. This will show up when running help on the `run` command"
+description = """
+    This is a much longer description, and something that should take up a considerable amount of space.
+    This will show when running `--help` on this specific command, so make sure you really describe how
+    to use this command for the user to create the best experience for them.
+"""
+
+[args.]

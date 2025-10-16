@@ -22,8 +22,10 @@ pub enum Error {
     InvalidURL,
     #[error("Body not UTF-8")]
     InvalidBody,
-    #[error("skim error")]
+    #[error("skim error: {0}")]
     SkimError(#[from] skim::options::SkimOptionsBuilderError),
+    #[error("{0}")]
+    KlaError(String),
 }
 
 impl From<reqwest::header::ToStrError> for Error {

@@ -1,6 +1,11 @@
-use config::{ConfigError, File, FileFormat, FileSourceFile, FileStoredFormat, Map, Source, Value};
+use clap::{command, Command};
+use config::{
+    Config, ConfigError, File, FileFormat, FileSourceFile, FileStoredFormat, Map, Source, Value,
+};
 use std::fmt::Debug;
 use std::path::Path;
+
+use crate::clap::{Opt, OptRes};
 
 #[derive(Debug)]
 pub struct OptionalFile<F: FileStoredFormat + 'static>(Option<File<FileSourceFile, F>>);
@@ -49,5 +54,28 @@ where
             Some(file) => file.collect_to(cache),
             None => Ok(()),
         }
+    }
+}
+
+pub trait AsCommand {
+    type Error;
+
+    fn as_command(&self) -> Result<Command, Self::Error>;
+}
+
+impl AsCommand for Config {
+    type Error = crate::Error;
+
+    /// as_command turns a Config object into a Clap::Command. The functions expects the following
+    /// items to be defined in the config. <sub>**Required values**</sub>
+    ///
+    /// - short_description: A description of what the command does
+    /// - description: A longer description of what the command does
+    fn as_command(&self) -> Result<Command, Self::Error> {
+        let command = command!()
+            .with_some(self.get_string("short_description").ok(), Command::about)
+            .with_some(self.get_string("description").ok(), Command::long_about);
+
+        Ok(command)
     }
 }
