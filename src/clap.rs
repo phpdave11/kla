@@ -1,6 +1,6 @@
 use clap::{
     builder::{IntoResettable, OsStr},
-    Arg, Command, Error,
+    Arg,
 };
 
 pub trait DefaultValueIfSome {
@@ -46,6 +46,20 @@ pub trait Ok: Sized {
     fn with_ok<T, F>(self, v: Result<T, Self::Error>, f: F) -> Result<Self, Self::Error>
     where
         F: Fn(Self, T) -> Result<Self, Self::Error>;
+
+    /// with_ok_value works the same as with_ok, but only the value has a result. The
+    /// result of the value will bubble out to the call.
+    ///
+    /// example:
+    /// ```rust
+    /// command!().with_ok_value(Ok("something"), Command::about);
+    /// ```
+    fn with_ok_value<T, F>(self, v: Result<T, Self::Error>, f: F) -> Result<Self, Self::Error>
+    where
+        F: Fn(Self, T) -> Self,
+    {
+        self.with_ok(v, |s, v| Ok(f(s, v)))
+    }
 }
 
 macro_rules! impl_opt {

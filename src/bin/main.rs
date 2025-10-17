@@ -3,11 +3,13 @@
 use std::{ffi::OsString, fs, sync::Arc};
 
 use clap::{arg, command, ArgAction, ArgMatches, Command};
-use config::{Config, File, FileFormat};
+use config::{Config, FileFormat};
 use http::Method;
 use kla::{
-    clap::DefaultValueIfSome, config::OptionalFile, Endpoint, Environment, Error, FromEnvironment,
-    KlaClientBuilder, KlaRequestBuilder, OutputBuilder,
+    clap::DefaultValueIfSome,
+    config::{ConfigCommand, OptionalFile},
+    Endpoint, Environment, Error, FromEnvironment, KlaClientBuilder, KlaRequestBuilder,
+    OutputBuilder,
 };
 use regex::Regex;
 use reqwest::ClientBuilder;
@@ -82,6 +84,7 @@ async fn main() -> Result<(), Error> {
             Command::new("run")
             .about("run templates defined for the environment")
             .alias("template")
+            .disable_help_flag(true)
             .arg(arg!(template: [template] "The template you want to run"))
             .arg(arg!([args] ... "Any arguments for the template").trailing_var_arg(true).allow_hyphen_values(true))
         )
@@ -95,6 +98,7 @@ async fn main() -> Result<(), Error> {
     }
 }
 
+/// run_run will exectute a template
 async fn run_run<S: Into<String>>(
     template: Option<S>,
     args: &ArgMatches,
@@ -108,18 +112,23 @@ async fn run_run<S: Into<String>>(
 
     let env = Environment::new(args.get_one("env"), conf)?;
 
-    let tmpl_conf = Config::builder()
-        .add_source_environment(&env, &template)?
-        .build()?;
+    let tmpl_cmd = ConfigCommand::from_config(
+        &template,
+        Config::builder()
+            .add_source_environment(&env, &template)?
+            .build()?,
+    )?;
 
-    command!().subcommand(
-        Command::new("run")
-            .about("run templates defined for the environment")
-            .alias("template")
-            .subcommand(tmpl_conf.as_command()?),
-    );
+    let m = command!()
+        .subcommand(
+            Command::new("run")
+                .about("run templates defined for the environment")
+                .alias("template")
+                .subcommand(Command::try_from(tmpl_cmd)?),
+        )
+        .get_matches();
 
-    println!("{:?}, {:?}", template, env);
+    println!("{:?}, {:?}, {:?}", template, env, m);
     Ok(())
 }
 

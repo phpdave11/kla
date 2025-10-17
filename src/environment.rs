@@ -4,7 +4,6 @@ use std::{
     path::PathBuf,
 };
 
-use clap::{command, Command};
 use config::{builder::DefaultState, Config, ConfigBuilder, File};
 use serde::Deserialize;
 use skim::SkimItem;

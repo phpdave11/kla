@@ -28,6 +28,12 @@ pub enum Error {
     KlaError(String),
 }
 
+impl From<&str> for Error {
+    fn from(err: &str) -> Self {
+        Error::KlaError(err.to_string())
+    }
+}
+
 impl From<reqwest::header::ToStrError> for Error {
     fn from(err: reqwest::header::ToStrError) -> Self {
         Error::InvalidArguments(err.to_string())

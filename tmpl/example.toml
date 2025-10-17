@@ -5,4 +5,17 @@ description = """
     to use this command for the user to create the best experience for them.
 """
 
-[args.]
+[[arg]]
+name = "argument"
+short = 'a'
+short_aliases = ['b', 'c']
+long = "argument-flag"
+aliases = ["arg", "awesome-arg"]
+help = "This is a short description"
+long_help = """
+    This is a longer help text that can be displayed sometimes, so here I am going to go on and on and on for a while to make this as long as possible, and apparently I am going to use some smaller words that make the words feel cheap and choppy. Oh well.
+"""
+next_line_help = true
+required = true
+default_value = "argument value"
+env = "KLA_ARG_VAL"
