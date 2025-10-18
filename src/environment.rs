@@ -1,8 +1,11 @@
 use std::{
     borrow::Cow,
+    ffi::OsString,
     fmt::{Display, Write},
     path::PathBuf,
 };
+
+use std::fs::{self, DirEntry};
 
 use config::{builder::DefaultState, Config, ConfigBuilder, File};
 use serde::Deserialize;
@@ -44,6 +47,13 @@ impl Environment {
         match self {
             Environment::Endpoint(endpoint) => endpoint.create_url(uri),
             Environment::Empty => String::from(uri),
+        }
+    }
+
+    pub fn templates(&self) -> Result<Box<dyn Iterator<Item = String>>> {
+        match self {
+            Environment::Endpoint(endpoint) => endpoint.walk_templates(),
+            Environment::Empty => Ok(Box::new(std::iter::empty())),
         }
     }
 }
@@ -96,6 +106,23 @@ impl Endpoint {
         let mut url = self.prefix.clone();
         url.push_str(uri.trim_start_matches("/"));
         url
+    }
+
+    /// walk_templates returns a WalkDir of all the templates in the
+    /// template directory
+    pub fn walk_templates(&self) -> Result<Box<dyn Iterator<Item = String>>> {
+        let template_dir = match self.template_dir.as_ref() {
+            Some(template) => template,
+            None => return Ok(Box::new(std::iter::empty())),
+        };
+
+        let templates = fs::read_dir(template_dir)?
+            .collect::<std::result::Result<Vec<DirEntry>, std::io::Error>>()?
+            .into_iter()
+            .filter(|f| f.file_type().map(|v| v.is_file()).unwrap_or(false))
+            .filter_map(|f| OsString::from(f.path().file_stem()?).into_string().ok());
+
+        Ok(Box::new(templates))
     }
 }
 

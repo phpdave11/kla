@@ -84,7 +84,6 @@ async fn main() -> Result<(), Error> {
             Command::new("run")
             .about("run templates defined for the environment")
             .alias("template")
-            .disable_help_flag(true)
             .arg(arg!(template: [template] "The template you want to run"))
             .arg(arg!([args] ... "Any arguments for the template").trailing_var_arg(true).allow_hyphen_values(true))
         )
@@ -110,6 +109,10 @@ async fn run_run<S: Into<String>>(
         return run_run_empty(args, conf);
     };
 
+    if template == "help" || template == "--help" || template == "-h" {
+        return run_run_empty(args, conf);
+    }
+
     let env = Environment::new(args.get_one("env"), conf)?;
 
     let tmpl_cmd = ConfigCommand::from_config(
@@ -132,8 +135,28 @@ async fn run_run<S: Into<String>>(
     Ok(())
 }
 
-fn run_run_empty(_args: &ArgMatches, _conf: &Config) -> Result<(), Error> {
-    todo!()
+fn run_run_empty(args: &ArgMatches, conf: &Config) -> Result<(), Error> {
+    let env = Environment::new(args.get_one("env"), conf)?;
+
+    let mut m = Command::new("run")
+        .about("run templates defined for the environment")
+        .alias("template")
+        .arg_required_else_help(true);
+
+    for template in env.templates()? {
+        let tmpl_cmd = ConfigCommand::from_config(
+            &template,
+            Config::builder()
+                .add_source_environment(&env, &template)?
+                .build()?,
+        )?;
+
+        m = m.subcommand(Command::try_from(tmpl_cmd)?);
+    }
+
+    command!().subcommand(m).get_matches();
+
+    Ok(())
 }
 
 fn run_environments(args: &ArgMatches, conf: &Config) -> Result<(), Error> {
