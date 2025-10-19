@@ -4,6 +4,10 @@ description = """
     This will show when running `--help` on this specific command, so make sure you really describe how
     to use this command for the user to create the best experience for them.
 """
+body = """
+This was your argument: {{ argument }}
+"""
+uri = "/"
 
 [[arg]]
 name = "argument"

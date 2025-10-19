@@ -1,12 +1,13 @@
-use clap::{command, Arg, Command};
+use clap::{command, Arg, ArgMatches, Command};
 use config::{
     Config, ConfigError, File, FileFormat, FileSourceFile, FileStoredFormat, Map, Source, Value,
 };
 use serde::Deserialize;
 use std::fmt::Debug;
 use std::path::Path;
+use tera::{Context, Tera};
 
-use crate::clap::{Ok, Opt};
+use crate::opt::{Ok, Opt};
 
 #[derive(Debug)]
 pub struct OptionalFile<F: FileStoredFormat + 'static>(Option<File<FileSourceFile, F>>);
@@ -59,7 +60,7 @@ where
 }
 
 #[derive(Deserialize)]
-pub struct ConfigCommand {
+struct ConfigCommand {
     #[serde(skip)]
     pub name: String,
 
@@ -69,14 +70,21 @@ pub struct ConfigCommand {
     #[serde(rename = "description")]
     description: Option<String>,
 
-    #[serde(rename = "arg")]
+    #[serde(rename = "arg", default)]
     args: Vec<ConfigArg>,
+
+    #[serde(rename = "body")]
+    body: Option<String>,
+    #[serde(rename = "uri")]
+    uri: Option<String>,
+    #[serde(rename = "method", default)]
+    method: Option<String>,
 }
 
 impl ConfigCommand {
-    pub fn from_config<S: Into<String>>(
+    pub fn with_name<S: Into<String>, C: TryInto<Self, Error = crate::Error>>(
         name: S,
-        conf: Config,
+        conf: C,
     ) -> Result<ConfigCommand, crate::Error> {
         let mut cmd: Self = conf.try_into()?;
         cmd.name = name.into();
@@ -89,6 +97,15 @@ impl TryFrom<Config> for ConfigCommand {
 
     fn try_from(value: Config) -> Result<Self, Self::Error> {
         let v = value.try_deserialize()?;
+        Ok(v)
+    }
+}
+
+impl TryFrom<&Config> for ConfigCommand {
+    type Error = crate::Error;
+
+    fn try_from(value: &Config) -> Result<Self, Self::Error> {
+        let v = value.clone().try_deserialize()?;
         Ok(v)
     }
 }
@@ -114,10 +131,133 @@ impl TryFrom<ConfigCommand> for Command {
     }
 }
 
+/// enables a oneliner to turn a config into a Command
+pub trait CommandWithName: Sized {
+    type Error;
+
+    fn command_with_name(self, name: &str) -> Result<Command, Self::Error>;
+}
+
+/// This implementation makes it possible for &Config and Config (both of which
+/// implement TryInto<ConfigCommand>) to call the shorthand function below
+impl<T: TryInto<ConfigCommand, Error = crate::Error>> CommandWithName for T {
+    type Error = crate::Error;
+
+    /// Turn the a Config or &Config object into a Command. This function expects
+    /// the config to have the following structure: _optional_
+    ///
+    /// _short_description_: Short description of the command
+    /// _description_: Description of the command
+    /// _arg_: Array of Arguments
+    fn command_with_name(self, name: &str) -> Result<Command, Self::Error> {
+        Command::try_from(ConfigCommand::with_name(name, self)?)
+    }
+}
+
+pub trait TemplateArgsContext: Sized {
+    type Error;
+    fn template_args(self, tmpl_conf: &Config, args: &ArgMatches) -> Result<Self, Self::Error>;
+}
+
+impl TemplateArgsContext for Context {
+    type Error = crate::Error;
+    /// template_arguments takes the values provided by command line arguments and
+    /// passes them into the context.
+    fn template_args(mut self, tmpl_conf: &Config, args: &ArgMatches) -> Result<Self, Self::Error> {
+        for arg in tmpl_conf.get_array("arg").unwrap_or_default() {
+            let arg_conf: ConfigArg = arg.try_deserialize()?;
+
+            match arg_conf.arg_type() {
+                ConfigArgType::List => {
+                    let val = match args.get_many::<String>(&arg_conf.name) {
+                        Some(val) => val.collect::<Vec<_>>(),
+                        None => continue,
+                    };
+
+                    self.insert(&arg_conf.name, &val)
+                }
+                ConfigArgType::Single => {
+                    let val = match args.get_one::<String>(&arg_conf.name) {
+                        Some(val) => val,
+                        None => continue,
+                    };
+
+                    self.insert(&arg_conf.name, val)
+                }
+            }
+        }
+
+        Ok(self)
+    }
+}
+
+pub trait KlaTemplateConfig: Sized {
+    type Error;
+    fn with_kla_template(self, conf: &Config) -> Result<Self, Self::Error>;
+    fn opt_template<S: AsRef<str>>(
+        self,
+        name: &str,
+        content: Option<S>,
+    ) -> Result<Self, Self::Error>;
+    fn template(self, name: &str, content: &str) -> Result<Self, Self::Error>;
+}
+
+impl KlaTemplateConfig for Tera {
+    type Error = crate::Error;
+
+    fn with_kla_template(self, conf: &Config) -> Result<Self, Self::Error> {
+        let config: ConfigCommand = conf.clone().try_deserialize()?;
+        let context = self
+            .opt_template("body", config.body)?
+            .template(
+                "uri",
+                config.uri.unwrap_or_else(|| String::from("/")).as_str(),
+            )?
+            .template(
+                "method",
+                config
+                    .method
+                    .unwrap_or_else(|| String::from("GET"))
+                    .as_str(),
+            )?;
+        Ok(context)
+    }
+
+    fn opt_template<'a, S: AsRef<str>>(
+        mut self,
+        name: &str,
+        content: Option<S>,
+    ) -> Result<Self, Self::Error> {
+        if let Some(body) = content {
+            self.add_raw_template(name, body.as_ref())?;
+        }
+        Ok(self)
+    }
+
+    fn template(mut self, name: &str, content: &str) -> Result<Self, Self::Error> {
+        self.add_raw_template(name, content.as_ref())?;
+        Ok(self)
+    }
+}
+
+#[derive(Deserialize, Copy, Clone)]
+enum ConfigArgType {
+    List,
+    Single,
+}
+
+impl Default for ConfigArgType {
+    fn default() -> Self {
+        Self::Single
+    }
+}
+
 #[derive(Deserialize)]
 struct ConfigArg {
     #[serde(rename = "name")]
     name: String,
+    #[serde(rename = "type", default)]
+    arg_type: ConfigArgType,
     #[serde(rename = "short")]
     short: Option<char>,
     #[serde(rename = "short_aliases")]
@@ -178,6 +318,12 @@ struct ConfigArg {
     hide_short_help: Option<bool>,
     #[serde(rename = "hide_long_help")]
     hide_long_help: Option<bool>,
+}
+
+impl ConfigArg {
+    pub fn arg_type(&self) -> ConfigArgType {
+        self.arg_type
+    }
 }
 
 impl TryFrom<Config> for ConfigArg {

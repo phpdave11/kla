@@ -7,37 +7,20 @@ use config::{Config, FileFormat};
 use http::Method;
 use kla::{
     clap::DefaultValueIfSome,
-    config::{ConfigCommand, OptionalFile},
-    Endpoint, Environment, Error, FromEnvironment, KlaClientBuilder, KlaRequestBuilder,
+    config::{CommandWithName, KlaTemplateConfig, OptionalFile, TemplateArgsContext},
+    Endpoint, Environment, Error, FromEnvironment, KlaClientBuilder, KlaRequestBuilder, OptRender,
     OutputBuilder,
 };
 use regex::Regex;
-use reqwest::ClientBuilder;
+use reqwest::{Client, ClientBuilder};
 use skim::{prelude::SkimOptionsBuilder, Skim, SkimItem};
+use tera::{Context, Tera};
 use tokio::sync::OnceCell;
 
 static DEFAULT_ENV: OnceCell<OsString> = OnceCell::const_new();
 
-#[tokio::main]
-async fn main() -> Result<(), Error> {
-    let conf = Config::builder()
-        .add_source(OptionalFile::new("config.toml", FileFormat::Toml))
-        .add_source(OptionalFile::new("/etc/kla/config.toml", FileFormat::Toml))
-        .set_default("default.environment", "/etc/kla/.default-environment")?
-        .build()?;
-
-    // if the config file has a default environment we want to store it in a static
-    // variable so it can be used everywhere
-    if let Ok(default_environment) = fs::read_to_string(
-        conf.get_string("default.environment")
-            .expect("default value"),
-    ) {
-        DEFAULT_ENV
-            .get_or_init(|| async { OsString::from(default_environment) })
-            .await;
-    }
-
-    let m = command!()
+fn command() -> Command {
+    command!()
         .arg_required_else_help(true)
         .subcommand_required(false)
         .arg(arg!(--agent <AGENT> "The header agent string").default_value("kla"))
@@ -80,12 +63,80 @@ async fn main() -> Result<(), Error> {
             .alias("context")
             .arg(arg!(matcher: [Matcher] "A regex statement to filter down matches").required(false).default_value(".*"))
         )
+}
+
+fn client(args: &ArgMatches) -> Result<Client, Error> {
+    let client = ClientBuilder::new()
+        .opt_header_agent(args.get_one("agent"))?
+        .gzip(
+            !args
+                .get_one::<bool>("no-gzip")
+                .map(|v| *v)
+                .unwrap_or_default(),
+        )
+        .brotli(
+            !args
+                .get_one::<bool>("no-brotli")
+                .map(|v| *v)
+                .unwrap_or_default(),
+        )
+        .deflate(
+            !args
+                .get_one::<bool>("no-deflate")
+                .map(|v| *v)
+                .unwrap_or_default(),
+        )
+        .connection_verbose(
+            args.get_one::<bool>("verbose")
+                .map(|v| *v)
+                .unwrap_or_default(),
+        )
+        .opt_max_redirects(args.get_one("max-redirects"))
+        .no_redirects(
+            args.get_one::<bool>("no-redirects")
+                .map(|v| *v)
+                .unwrap_or_default(),
+        )
+        .opt_proxy(args.get_one("proxy"), args.get_one("proxy-auth"))?
+        .opt_proxy_http(args.get_one("proxy-http"), args.get_one("proxy-auth"))?
+        .opt_proxy_https(args.get_one("proxy-https"), args.get_one("proxy-auth"))?
+        .opt_certificate(args.get_many("certificate"))?
+        .build()?;
+    Ok(client)
+}
+
+#[tokio::main]
+async fn main() -> Result<(), Error> {
+    let conf = Config::builder()
+        .add_source(OptionalFile::new("config.toml", FileFormat::Toml))
+        .add_source(OptionalFile::new("/etc/kla/config.toml", FileFormat::Toml))
+        .set_default("default.environment", "/etc/kla/.default-environment")?
+        .build()?;
+
+    // if the config file has a default environment we want to store it in a static
+    // variable so it can be used everywhere
+    if let Ok(default_environment) = fs::read_to_string(
+        conf.get_string("default.environment")
+            .expect("default value"),
+    ) {
+        DEFAULT_ENV
+            .get_or_init(|| async { OsString::from(default_environment) })
+            .await;
+    }
+
+    let m = command()
         .subcommand(
             Command::new("run")
-            .about("run templates defined for the environment")
-            .alias("template")
-            .arg(arg!(template: [template] "The template you want to run"))
-            .arg(arg!([args] ... "Any arguments for the template").trailing_var_arg(true).allow_hyphen_values(true))
+                .about("run templates defined for the environment")
+                .alias("template")
+                .arg(arg!(template: [template] "The template you want to run"))
+                .disable_help_flag(true)
+                .allow_external_subcommands(true)
+                .arg(
+                    arg!([args] ... "Any arguments for the template")
+                        .trailing_var_arg(true)
+                        .allow_hyphen_values(true),
+                ),
         )
         .get_matches();
 
@@ -103,35 +154,76 @@ async fn run_run<S: Into<String>>(
     args: &ArgMatches,
     conf: &Config,
 ) -> Result<(), Error> {
-    let template: String = if let Some(template) = template {
-        template.into()
-    } else {
-        return run_run_empty(args, conf);
+    let template: String = match template.map(|s| s.into()) {
+        None => return run_run_empty(args, conf),
+        Some(template) if template == "help" => return run_run_empty(args, conf),
+        Some(template) if template == "--help" => return run_run_empty(args, conf),
+        Some(template) => template,
     };
 
-    if template == "help" || template == "--help" || template == "-h" {
-        return run_run_empty(args, conf);
-    }
-
     let env = Environment::new(args.get_one("env"), conf)?;
+    let tmpl_config = Config::builder()
+        .add_source_environment(&env, &template)?
+        .build()?;
 
-    let tmpl_cmd = ConfigCommand::from_config(
-        &template,
-        Config::builder()
-            .add_source_environment(&env, &template)?
-            .build()?,
-    )?;
-
-    let m = command!()
+    let m = command()
         .subcommand(
             Command::new("run")
                 .about("run templates defined for the environment")
                 .alias("template")
-                .subcommand(Command::try_from(tmpl_cmd)?),
+                .subcommand((&tmpl_config).command_with_name(&template)?),
         )
         .get_matches();
 
-    println!("{:?}, {:?}, {:?}", template, env, m);
+    let tmpl_m = m
+        .subcommand()
+        .expect("only run in run")
+        .1
+        .subcommand()
+        .expect("only run with template")
+        .1;
+
+    let context = Context::new().template_args(&tmpl_config, &tmpl_m)?;
+
+    let tmpl = Tera::default().with_kla_template(&tmpl_config)?;
+    let client = client(&m)?;
+    let url = env.create_url(&tmpl.render("uri", &context)?);
+    let method = Method::try_from(tmpl.render("method", &context)?.to_uppercase().as_str())?;
+
+    let response = client
+        .request(method, url)
+        .opt_body(tmpl.render_some("body", &context)?.as_ref())?
+        .opt_headers(m.get_many("header"))?
+        .opt_bearer_auth(m.get_one("bearer-token"))
+        .opt_basic_auth(m.get_one("basic-auth"))
+        .opt_query(m.get_many("query"))?
+        .opt_form(m.get_many("form"))?
+        .opt_timeout(m.get_one("timeout"))?
+        .opt_version(m.get_one("http-version"))?
+        .send()
+        .await?;
+
+    let succeed = response.status().is_success();
+
+    OutputBuilder::new(response)
+        .opt_template(
+            match succeed {
+                true => tmpl.render_some("output", &context)?,
+                false => tmpl.render_some("failure-output", &context)?,
+            }
+            .as_ref(),
+        )
+        .opt_template(match succeed {
+            true => args.get_one("template"),
+            false => args.get_one("failure-template"),
+        })
+        .opt_output(args.get_one("output"))
+        .await?
+        .build()
+        .await?
+        .output()
+        .await?;
+
     Ok(())
 }
 
@@ -144,17 +236,13 @@ fn run_run_empty(args: &ArgMatches, conf: &Config) -> Result<(), Error> {
         .arg_required_else_help(true);
 
     for template in env.templates()? {
-        let tmpl_cmd = ConfigCommand::from_config(
-            &template,
-            Config::builder()
-                .add_source_environment(&env, &template)?
-                .build()?,
-        )?;
-
-        m = m.subcommand(Command::try_from(tmpl_cmd)?);
+        let tmpl_conf = Config::builder()
+            .add_source_environment(&env, &template)?
+            .build()?;
+        m = m.subcommand(tmpl_conf.command_with_name(&template)?);
     }
 
-    command!().subcommand(m).get_matches();
+    command().subcommand(m).get_matches();
 
     Ok(())
 }
@@ -237,43 +325,7 @@ async fn run_root(args: &ArgMatches, conf: &Config) -> Result<(), Error> {
     };
 
     let url = env.create_url(uri);
-
-    let client = ClientBuilder::new()
-        .opt_header_agent(args.get_one("agent"))?
-        .gzip(
-            !args
-                .get_one::<bool>("no-gzip")
-                .map(|v| *v)
-                .unwrap_or_default(),
-        )
-        .brotli(
-            !args
-                .get_one::<bool>("no-brotli")
-                .map(|v| *v)
-                .unwrap_or_default(),
-        )
-        .deflate(
-            !args
-                .get_one::<bool>("no-deflate")
-                .map(|v| *v)
-                .unwrap_or_default(),
-        )
-        .connection_verbose(
-            args.get_one::<bool>("verbose")
-                .map(|v| *v)
-                .unwrap_or_default(),
-        )
-        .opt_max_redirects(args.get_one("max-redirects"))
-        .no_redirects(
-            args.get_one::<bool>("no-redirects")
-                .map(|v| *v)
-                .unwrap_or_default(),
-        )
-        .opt_proxy(args.get_one("proxy"), args.get_one("proxy-auth"))?
-        .opt_proxy_http(args.get_one("proxy-http"), args.get_one("proxy-auth"))?
-        .opt_proxy_https(args.get_one("proxy-https"), args.get_one("proxy-auth"))?
-        .opt_certificate(args.get_many("certificate"))?
-        .build()?;
+    let client = client(args)?;
 
     let response = client
         .request(method, url)

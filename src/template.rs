@@ -169,3 +169,21 @@ impl Template {
         Ok(())
     }
 }
+
+pub trait OptRender {
+    fn render_some(&self, name: &str, context: &Context) -> tera::Result<Option<String>>;
+}
+
+impl OptRender for Tera {
+    fn render_some(&self, template_name: &str, context: &Context) -> tera::Result<Option<String>> {
+        if self
+            .get_template_names()
+            .find(|x| *x == template_name)
+            .is_some()
+        {
+            self.render(template_name, context).map(|v| Some(v))
+        } else {
+            Ok(None)
+        }
+    }
+}

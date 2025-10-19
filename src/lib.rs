@@ -1,6 +1,7 @@
 mod client; // traits and impl for extending client builder and client
 mod environment; // environment struct and logic
 mod error; // package error handling
+mod opt;
 mod output; // managing the output of kla
 mod request; // traits and impl for extending request and requestbuilder
 mod template; // templating responses
