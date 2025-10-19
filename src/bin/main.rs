@@ -130,13 +130,14 @@ async fn main() -> Result<(), Error> {
                 .about("run templates defined for the environment")
                 .alias("template")
                 .arg(arg!(template: [template] "The template you want to run"))
-                .disable_help_flag(true)
                 .allow_external_subcommands(true)
+                .disable_help_flag(true)
                 .arg(
                     arg!([args] ... "Any arguments for the template")
                         .trailing_var_arg(true)
                         .allow_hyphen_values(true),
-                ),
+                )
+                .arg(arg!(--help -h "Show the help command, and all templates available to you.")),
         )
         .get_matches();
 

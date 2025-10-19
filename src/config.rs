@@ -260,11 +260,11 @@ struct ConfigArg {
     arg_type: ConfigArgType,
     #[serde(rename = "short")]
     short: Option<char>,
-    #[serde(rename = "short_aliases")]
+    #[serde(rename = "short_aliases", default)]
     short_aliases: Vec<char>,
     #[serde(rename = "long")]
     long: Option<String>,
-    #[serde(rename = "aliases")]
+    #[serde(rename = "aliases", default)]
     aliases: Vec<String>,
     #[serde(rename = "help")]
     help: Option<String>,
@@ -296,11 +296,11 @@ struct ConfigArg {
     raw: Option<bool>,
     #[serde(rename = "default_value")]
     default_value: Option<String>,
-    #[serde(rename = "default_values")]
+    #[serde(rename = "default_values", default)]
     default_values: Option<Vec<String>>,
     #[serde(rename = "default_missing_value")]
     default_missing_value: Option<String>,
-    #[serde(rename = "default_missing_values")]
+    #[serde(rename = "default_missing_values", default)]
     default_missing_values: Option<Vec<String>>,
     #[serde(rename = "env")]
     env: Option<String>,

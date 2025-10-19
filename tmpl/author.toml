@@ -2,4 +2,8 @@ short_description = "A list of all the authors we have poetry for"
 description = """
 A List of all the authors we have poetry for. This list is created by the api, and returned as json data. This shorthand makes it easy to render out all the authors available for your usage
 """
-uri = "/authors"
+uri = "/author{% if author is not defined %}s{% else %}/{{ author }}{% endif %}"
+
+[[arg]]
+  name = "author"
+  help = "The author you want to look into"
