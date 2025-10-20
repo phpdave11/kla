@@ -55,9 +55,7 @@ impl KlaRequestBuilder for RequestBuilder {
             "1.1" => Ok(Version::HTTP_11),
             "2.0" => Ok(Version::HTTP_2),
             "3.0" => Ok(Version::HTTP_3),
-            _ => Err(Error::InvalidArguments(String::from(
-                "invalid http version",
-            ))),
+            _ => Err(Error::from("invalid http version")),
         }?;
 
         Ok(self.version(version))
@@ -73,7 +71,7 @@ impl KlaRequestBuilder for RequestBuilder {
         // Also thanks for the library!
         let d: Duration = match DurationString::from_str(timeout.unwrap()) {
             Ok(v) => Ok(v),
-            Err(msg) => Err(Error::InvalidArguments(msg)),
+            Err(msg) => Err(Error::from(msg)),
         }?
         .into();
 
@@ -118,7 +116,7 @@ impl KlaRequestBuilder for RequestBuilder {
             Some(_) => Some(Body::from(body.to_owned())),
             None => None,
         }
-        .ok_or(Error::InvalidArguments("you must supply a body".to_owned()))?;
+        .ok_or(Error::from("you must supply a body"))?;
 
         Ok(self.body(body))
     }
@@ -138,15 +136,11 @@ impl KlaRequestBuilder for RequestBuilder {
                 let mut key_val = q.splitn(2, "=");
                 let name = key_val
                     .next()
-                    .ok_or(Error::InvalidArguments(format!(
-                        "{q} is not a valid key=value"
-                    )))?
+                    .ok_or(Error::from(format!("{q} is not a valid key=value")))?
                     .trim();
                 let value = key_val
                     .next()
-                    .ok_or(Error::InvalidArguments(format!(
-                        "{q} is not a valid key=value"
-                    )))?
+                    .ok_or(Error::from(format!("{q} is not a valid key=value")))?
                     .trim();
 
                 map.insert(name, value);
@@ -172,15 +166,11 @@ impl KlaRequestBuilder for RequestBuilder {
                 let mut key_val = formval.splitn(2, "=");
                 let name = key_val
                     .next()
-                    .ok_or(Error::InvalidArguments(format!(
-                        "{formval} is not a valid key=value"
-                    )))?
+                    .ok_or(Error::from(format!("{formval} is not a valid key=value")))?
                     .trim();
                 let value = key_val
                     .next()
-                    .ok_or(Error::InvalidArguments(format!(
-                        "{formval} is not a valid key=value"
-                    )))?
+                    .ok_or(Error::from(format!("{formval} is not a valid key=value")))?
                     .trim();
 
                 map.insert(name, value);
@@ -207,15 +197,11 @@ impl KlaRequestBuilder for RequestBuilder {
                 let mut key_val = header.splitn(2, ":");
                 let name = key_val
                     .next()
-                    .ok_or(Error::InvalidArguments(format!(
-                        "{header} is not a valid http header"
-                    )))?
+                    .ok_or(Error::from(format!("{header} is not a valid http header")))?
                     .trim();
                 let value = key_val
                     .next()
-                    .ok_or(Error::InvalidArguments(format!(
-                        "{header} is not a valid http header"
-                    )))?
+                    .ok_or(Error::from(format!("{header} is not a valid http header")))?
                     .trim();
 
                 map.insert(

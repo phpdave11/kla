@@ -1,27 +1,26 @@
 use std::convert::From;
+use std::error::Error as StdError;
 
 pub type Result<T> = std::result::Result<T, Error>;
 
+pub(crate) type BoxError = Box<dyn StdError + Send + Sync>;
+
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
-    #[error("Invalid JSON Body")]
-    BodyParsingError(String),
-    #[error("Configuration Error")]
-    ConfigError(String),
-    #[error("Could not create client")]
-    ClientError(String),
-    #[error("Could not create template")]
-    TemplateError(String),
-    #[error("Invalid arguments sent")]
-    InvalidArguments(String),
-    #[error("io Error")]
-    IOError(String),
-    #[error("Invalid Method")]
-    InvalidMethod,
-    #[error("Invalid Url")]
-    InvalidURL,
-    #[error("Body not UTF-8")]
-    InvalidBody,
+    #[error("Error Parsing Data: {0}")]
+    BodyParsingError(#[from] serde_json::Error),
+    #[error("Configuration Error: {0}")]
+    ConfigError(#[from] config::ConfigError),
+    #[error("HTTP Error: {0}")]
+    HTTPError(#[from] reqwest::Error),
+    #[error("Templating Error: {0}")]
+    TemplateError(#[from] tera::Error),
+    #[error("Invalid arguments: {0}")]
+    InvalidArguments(BoxError),
+    #[error("io Error: {0}")]
+    IOError(#[from] std::io::Error),
+    #[error("Body not UTF-8: {0}")]
+    InvalidBody(#[from] std::str::Utf8Error),
     #[error("skim error: {0}")]
     SkimError(#[from] skim::options::SkimOptionsBuilderError),
     #[error("{0}")]
@@ -34,74 +33,44 @@ impl From<&str> for Error {
     }
 }
 
-impl From<reqwest::header::ToStrError> for Error {
-    fn from(err: reqwest::header::ToStrError) -> Self {
-        Error::InvalidArguments(err.to_string())
-    }
-}
-
-impl From<reqwest::header::InvalidHeaderValue> for Error {
-    fn from(err: reqwest::header::InvalidHeaderValue) -> Self {
-        Error::InvalidArguments(err.to_string())
-    }
-}
-
-impl From<reqwest::header::InvalidHeaderName> for Error {
-    fn from(err: reqwest::header::InvalidHeaderName) -> Self {
-        Error::InvalidArguments(err.to_string())
+impl From<String> for Error {
+    fn from(err: String) -> Self {
+        Error::KlaError(err)
     }
 }
 
 impl From<regex::Error> for Error {
     fn from(err: regex::Error) -> Self {
-        Error::InvalidArguments(err.to_string())
-    }
-}
-
-impl From<reqwest::Error> for Error {
-    fn from(err: reqwest::Error) -> Self {
-        Error::ClientError(err.to_string())
-    }
-}
-
-impl From<std::io::Error> for Error {
-    fn from(err: std::io::Error) -> Self {
-        Error::IOError(err.to_string())
-    }
-}
-
-impl From<std::str::Utf8Error> for Error {
-    fn from(_: std::str::Utf8Error) -> Self {
-        Error::InvalidBody
-    }
-}
-
-impl From<serde_json::Error> for Error {
-    fn from(err: serde_json::Error) -> Self {
-        Error::BodyParsingError(err.to_string())
-    }
-}
-
-impl From<config::ConfigError> for Error {
-    fn from(err: config::ConfigError) -> Self {
-        Error::ConfigError(err.to_string())
-    }
-}
-
-impl From<tera::Error> for Error {
-    fn from(err: tera::Error) -> Self {
-        Error::TemplateError(format!("{}", err))
-    }
-}
-
-impl From<http::method::InvalidMethod> for Error {
-    fn from(_: http::method::InvalidMethod) -> Self {
-        Error::InvalidMethod
+        Error::InvalidArguments(Box::new(err))
     }
 }
 
 impl From<url::ParseError> for Error {
-    fn from(_: url::ParseError) -> Self {
-        Error::InvalidURL
+    fn from(err: url::ParseError) -> Self {
+        Error::InvalidArguments(Box::new(err))
+    }
+}
+
+impl From<http::method::InvalidMethod> for Error {
+    fn from(err: http::method::InvalidMethod) -> Self {
+        Error::InvalidArguments(Box::new(err))
+    }
+}
+
+impl From<reqwest::header::ToStrError> for Error {
+    fn from(err: reqwest::header::ToStrError) -> Self {
+        Error::InvalidArguments(Box::new(err))
+    }
+}
+
+impl From<reqwest::header::InvalidHeaderValue> for Error {
+    fn from(err: reqwest::header::InvalidHeaderValue) -> Self {
+        Error::InvalidArguments(Box::new(err))
+    }
+}
+
+impl From<reqwest::header::InvalidHeaderName> for Error {
+    fn from(err: reqwest::header::InvalidHeaderName) -> Self {
+        Error::InvalidArguments(Box::new(err))
     }
 }

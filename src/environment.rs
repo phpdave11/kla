@@ -168,13 +168,13 @@ impl FromEnvironment for ConfigBuilder<DefaultState> {
 
     fn add_source_environment(self, env: &Environment, tmpl: &str) -> Result<Self::Output> {
         let environment = match env {
-            Environment::Empty => return Err(Error::KlaError(String::from("no environment set"))),
+            Environment::Empty => return Err(Error::from("no environment set")),
             Environment::Endpoint(endpoint) => endpoint,
         };
 
         let template_dir = match environment.template_dir.as_ref() {
             Some(val) => val,
-            None => return Err(Error::KlaError(String::from("no template directory set"))),
+            None => return Err(Error::from("no template directory set")),
         };
 
         let mut template = PathBuf::from(template_dir);

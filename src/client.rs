@@ -62,7 +62,7 @@ impl KlaClientBuilder for ClientBuilder {
                     me = me.add_root_certificate(certificate);
                 }
                 _ => {
-                    return Err(Error::InvalidArguments(format!(
+                    return Err(Error::from(format!(
                         "Invalid certificate file extension: {}",
                         certificate
                     )))
@@ -157,7 +157,7 @@ impl KlaClientBuilder for ClientBuilder {
 
         let timeout: Duration = match DurationString::from_str(timeout.unwrap()) {
             Ok(v) => Ok(v),
-            Err(msg) => Err(Error::InvalidArguments(msg)),
+            Err(msg) => Err(Error::from(msg.as_str())),
         }?
         .into();
         Ok(self.connect_timeout(timeout))

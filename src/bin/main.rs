@@ -11,6 +11,7 @@ use kla::{
     Endpoint, Environment, Error, FromEnvironment, KlaClientBuilder, KlaRequestBuilder, OptRender,
     OutputBuilder,
 };
+use log::error;
 use regex::Regex;
 use reqwest::{Client, ClientBuilder};
 use skim::{prelude::SkimOptionsBuilder, Skim, SkimItem};
@@ -106,7 +107,16 @@ fn client(args: &ArgMatches) -> Result<Client, Error> {
 }
 
 #[tokio::main]
-async fn main() -> Result<(), Error> {
+async fn main() {
+    match run().await {
+        Ok(_) => (),
+        Err(err) => error!("{}", err),
+    }
+}
+
+async fn run() -> Result<(), Error> {
+    colog::init();
+
     let conf = Config::builder()
         .add_source(OptionalFile::new("config.toml", FileFormat::Toml))
         .add_source(OptionalFile::new("/etc/kla/config.toml", FileFormat::Toml))
@@ -137,7 +147,7 @@ async fn main() -> Result<(), Error> {
                         .trailing_var_arg(true)
                         .allow_hyphen_values(true),
                 )
-                .arg(arg!(--help -h "Show the help command, and all templates available to you.")),
+                .arg(arg!(-h --help "Show the help command, and all templates available to you.")),
         )
         .get_matches();
 

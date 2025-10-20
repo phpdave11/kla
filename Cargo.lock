@@ -332,10 +332,30 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b94f61472cee1439c0b966b47e3aca9ae07e45d070759512cd390ea2bebc6675"
 
 [[package]]
+name = "colog"
+version = "1.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "df62599ba6adc9c6c04a54278c8209125343dc4775f57b9d76c9a4287e58f2bd"
+dependencies = [
+ "colored",
+ "env_logger",
+ "log",
+]
+
+[[package]]
 name = "colorchoice"
 version = "1.0.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b05b61dc5112cbb17e4b6cd61790d9845d13888356391624cbe7e41efeac1e75"
+
+[[package]]
+name = "colored"
+version = "3.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fde0e0ec90c9dfb3b4b1a0891a7dcd0e2bffde2f7efed5fe7c9bb00e5bfb915e"
+dependencies = [
+ "windows-sys 0.59.0",
+]
 
 [[package]]
 name = "compression-codecs"
@@ -1231,11 +1251,13 @@ name = "kla"
 version = "0.1.1"
 dependencies = [
  "clap",
+ "colog",
  "config",
  "crossbeam-channel",
  "duration-string",
  "git-version",
  "http",
+ "log",
  "regex",
  "reqwest",
  "serde",
