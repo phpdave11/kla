@@ -187,3 +187,33 @@ impl OptRender for Tera {
         }
     }
 }
+
+pub trait FetchMany {
+    fn fetch_many<'a>(
+        &'a self,
+        prefix: &'a str,
+        context: &'a Context,
+    ) -> impl Iterator<Item = RenderGroup<'a>>;
+}
+
+impl FetchMany for Tera {
+    fn fetch_many<'a>(
+        &'a self,
+        prefix: &'a str,
+        context: &'a Context,
+    ) -> impl Iterator<Item = RenderGroup<'a>> {
+        self.get_template_names()
+            .filter(move |tmpl| tmpl.starts_with(prefix))
+            .map(|f| RenderGroup {
+                name: f,
+                tmpl: self,
+                context: context,
+            })
+    }
+}
+
+pub struct RenderGroup<'a> {
+    pub name: &'a str,
+    pub tmpl: &'a Tera,
+    pub context: &'a Context,
+}

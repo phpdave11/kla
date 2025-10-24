@@ -59,6 +59,15 @@ where
     }
 }
 
+// HeaderConfig defines the values in the config needed to create a header
+#[derive(Deserialize)]
+pub struct ConfigKV {
+    #[serde(rename = "name")]
+    pub name: String,
+    #[serde(rename = "value")]
+    pub value: String,
+}
+
 #[derive(Deserialize)]
 struct ConfigCommand {
     #[serde(skip)]
@@ -79,6 +88,12 @@ struct ConfigCommand {
     uri: Option<String>,
     #[serde(rename = "method", default)]
     method: Option<String>,
+    #[serde(rename = "header", default)]
+    header: Vec<ConfigKV>,
+    #[serde(rename = "query", default)]
+    query: Vec<ConfigKV>,
+    #[serde(rename = "form", default)]
+    form: Vec<ConfigKV>,
 }
 
 impl ConfigCommand {
@@ -207,7 +222,7 @@ impl KlaTemplateConfig for Tera {
 
     fn with_kla_template(self, conf: &Config) -> Result<Self, Self::Error> {
         let config: ConfigCommand = conf.clone().try_deserialize()?;
-        let context = self
+        let mut context = self
             .opt_template("body", config.body)?
             .template(
                 "uri",
@@ -220,6 +235,19 @@ impl KlaTemplateConfig for Tera {
                     .unwrap_or_else(|| String::from("GET"))
                     .as_str(),
             )?;
+
+        for header in &config.header {
+            context = context.template(&format!("header.{}", header.name), &header.value)?;
+        }
+
+        for header in &config.query {
+            context = context.template(&format!("query.{}", header.name), &header.value)?;
+        }
+
+        for header in &config.form {
+            context = context.template(&format!("form.{}", header.name), &header.value)?;
+        }
+
         Ok(context)
     }
 

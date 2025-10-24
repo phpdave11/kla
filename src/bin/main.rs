@@ -8,8 +8,8 @@ use http::Method;
 use kla::{
     clap::DefaultValueIfSome,
     config::{CommandWithName, KlaTemplateConfig, OptionalFile, TemplateArgsContext},
-    Endpoint, Environment, Error, FromEnvironment, KlaClientBuilder, KlaRequestBuilder, OptRender,
-    OutputBuilder,
+    Endpoint, Environment, Error, FetchMany, FromEnvironment, KlaClientBuilder, KlaRequestBuilder,
+    OptRender, OutputBuilder,
 };
 use log::error;
 use regex::Regex;
@@ -205,10 +205,13 @@ async fn run_run<S: Into<String>>(
         .request(method, url)
         .opt_body(tmpl.render_some("body", &context)?.as_ref())?
         .opt_headers(m.get_many("header"))?
+        .opt_headers(Some(tmpl.fetch_many("header", &context)))?
         .opt_bearer_auth(m.get_one("bearer-token"))
         .opt_basic_auth(m.get_one("basic-auth"))
         .opt_query(m.get_many("query"))?
+        .opt_headers(Some(tmpl.fetch_many("query", &context)))?
         .opt_form(m.get_many("form"))?
+        .opt_headers(Some(tmpl.fetch_many("form", &context)))?
         .opt_timeout(m.get_one("timeout"))?
         .opt_version(m.get_one("http-version"))?
         .send()

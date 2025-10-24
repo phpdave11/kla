@@ -12,7 +12,55 @@ use std::{
     time::Duration,
 };
 
-use crate::{Error, Result};
+use crate::{Error, RenderGroup, Result};
+
+/// KeyValue enables you to turn a string like `key=value` into an actual key value
+/// object.
+pub struct KeyValue {
+    /// name is the name of the key value
+    name: String,
+    /// value is the value of the key value
+    value: String,
+}
+
+impl TryFrom<&String> for KeyValue {
+    type Error = crate::Error;
+
+    fn try_from(value: &String) -> Result<Self> {
+        let mut parts = value.splitn(2, "=");
+
+        let name: String = parts
+            .next()
+            .ok_or(crate::Error::from(format!(
+                "{value} is not a valid key=value"
+            )))?
+            .trim()
+            .into();
+        let value: String = parts
+            .next()
+            .ok_or(crate::Error::from(format!(
+                "{value} is not a valid key=value"
+            )))?
+            .trim()
+            .into();
+
+        Ok(KeyValue { name, value })
+    }
+}
+
+/// This implementation allows for a template to be turned into a
+/// key value object
+impl<'a> TryFrom<RenderGroup<'a>> for KeyValue {
+    type Error = crate::Error;
+
+    fn try_from(value: RenderGroup) -> std::result::Result<Self, Self::Error> {
+        let kv = KeyValue {
+            name: value.name.into(),
+            value: value.tmpl.render(value.name, value.context)?,
+        };
+        Ok(kv)
+    }
+}
 
 // This allows us to extend the reqwest RequestBuilder so that we can pass data from clap
 // directly into it, creating a seamless interface. This implementation leaves the raw data
@@ -20,17 +68,23 @@ use crate::{Error, Result};
 pub trait KlaRequestBuilder {
     // opt_headers takes the headers from the `--header` argument and applies them to the
     // request being created.
-    fn opt_headers<'a, T>(self, headers: Option<T>) -> Result<RequestBuilder>
+    fn opt_headers<E, T, V>(self, headers: Option<T>) -> Result<RequestBuilder>
     where
-        T: Iterator<Item = &'a String>;
+        E: Into<Error>,
+        V: TryInto<KeyValue, Error = E>,
+        T: Iterator<Item = V>;
 
-    fn opt_query<'a, T>(self, headers: Option<T>) -> Result<RequestBuilder>
+    fn opt_query<E, T, V>(self, headers: Option<T>) -> Result<RequestBuilder>
     where
-        T: Iterator<Item = &'a String>;
+        E: Into<Error>,
+        V: TryInto<KeyValue, Error = E>,
+        T: Iterator<Item = V>;
 
-    fn opt_form<'a, T>(self, form: Option<T>) -> Result<RequestBuilder>
+    fn opt_form<E, T, V>(self, form: Option<T>) -> Result<RequestBuilder>
     where
-        T: Iterator<Item = &'a String>;
+        E: Into<Error>,
+        V: TryInto<KeyValue, Error = E>,
+        T: Iterator<Item = V>;
 
     fn opt_body<'a>(self, body: Option<&String>) -> Result<RequestBuilder>;
 
@@ -121,98 +175,84 @@ impl KlaRequestBuilder for RequestBuilder {
         Ok(self.body(body))
     }
 
-    fn opt_query<'a, T>(self, query: Option<T>) -> Result<RequestBuilder>
+    fn opt_query<E, T, V>(self, query: Option<T>) -> Result<RequestBuilder>
     where
-        T: Iterator<Item = &'a String>,
+        E: Into<Error>,
+        V: TryInto<KeyValue, Error = E>,
+        T: Iterator<Item = V>,
     {
-        if let None = query {
+        let query = if let Some(query) = query {
+            query
+        } else {
             return Ok(self);
-        }
+        };
 
         let mut map = HashMap::new();
-        query
-            .unwrap()
-            .map(|q| {
-                let mut key_val = q.splitn(2, "=");
-                let name = key_val
-                    .next()
-                    .ok_or(Error::from(format!("{q} is not a valid key=value")))?
-                    .trim();
-                let value = key_val
-                    .next()
-                    .ok_or(Error::from(format!("{q} is not a valid key=value")))?
-                    .trim();
 
-                map.insert(name, value);
+        for item in query {
+            let item: KeyValue = item.try_into().map_err(|err| err.into())?;
+            map.insert(item.name, item.value);
+        }
 
-                Ok(())
-            })
-            .collect::<Result<()>>()?;
-
-        Ok(self.query(&map))
+        if map.is_empty() {
+            Ok(self)
+        } else {
+            Ok(self.query(&map))
+        }
     }
 
-    fn opt_form<'a, T>(self, form: Option<T>) -> Result<RequestBuilder>
+    fn opt_form<E, T, V>(self, form: Option<T>) -> Result<RequestBuilder>
     where
-        T: Iterator<Item = &'a String>,
+        E: Into<Error>,
+        V: TryInto<KeyValue, Error = E>,
+        T: Iterator<Item = V>,
     {
-        if let None = form {
+        let form = if let Some(form) = form {
+            form
+        } else {
             return Ok(self);
-        }
+        };
 
         let mut map = HashMap::new();
-        form.unwrap()
-            .map(|formval| {
-                let mut key_val = formval.splitn(2, "=");
-                let name = key_val
-                    .next()
-                    .ok_or(Error::from(format!("{formval} is not a valid key=value")))?
-                    .trim();
-                let value = key_val
-                    .next()
-                    .ok_or(Error::from(format!("{formval} is not a valid key=value")))?
-                    .trim();
 
-                map.insert(name, value);
+        for item in form {
+            let item: KeyValue = item.try_into().map_err(|err| err.into())?;
+            map.insert(item.name, item.value);
+        }
 
-                Ok(())
-            })
-            .collect::<Result<()>>()?;
-
-        Ok(self.form(&map))
+        if map.is_empty() {
+            Ok(self)
+        } else {
+            Ok(self.form(&map))
+        }
     }
 
-    fn opt_headers<'a, T>(self, headers: Option<T>) -> Result<RequestBuilder>
+    fn opt_headers<E, T, V>(self, headers: Option<T>) -> Result<RequestBuilder>
     where
-        T: Iterator<Item = &'a String>,
+        E: Into<Error>,
+        V: TryInto<KeyValue, Error = E>,
+        T: Iterator<Item = V>,
     {
-        if let None = headers {
+        let headers = if let Some(headers) = headers {
+            headers
+        } else {
             return Ok(self);
-        }
+        };
 
         let mut map = HeaderMap::new();
-        headers
-            .unwrap()
-            .map(|header| {
-                let mut key_val = header.splitn(2, ":");
-                let name = key_val
-                    .next()
-                    .ok_or(Error::from(format!("{header} is not a valid http header")))?
-                    .trim();
-                let value = key_val
-                    .next()
-                    .ok_or(Error::from(format!("{header} is not a valid http header")))?
-                    .trim();
 
-                map.insert(
-                    HeaderName::from_bytes(name.as_bytes())?,
-                    HeaderValue::from_bytes(value.as_bytes())?,
-                );
+        for item in headers {
+            let item: KeyValue = item.try_into().map_err(|err| err.into())?;
+            map.insert(
+                HeaderName::try_from(item.name)?,
+                HeaderValue::try_from(item.value)?,
+            );
+        }
 
-                Ok(())
-            })
-            .collect::<Result<()>>()?;
-
-        Ok(self.headers(map))
+        if map.is_empty() {
+            Ok(self)
+        } else {
+            Ok(self.headers(map))
+        }
     }
 }
