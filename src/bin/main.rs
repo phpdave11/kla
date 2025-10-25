@@ -1,4 +1,4 @@
-use std::{ffi::OsString, fs, sync::Arc};
+use std::{env, ffi::OsString, fs, sync::Arc};
 
 use clap::{arg, command, ArgAction, ArgMatches, Command};
 use config::{Config, FileFormat};
@@ -7,7 +7,7 @@ use kla::{
     clap::DefaultValueIfSome,
     config::{CommandWithName, KlaTemplateConfig, OptionalFile, TemplateArgsContext},
     Endpoint, Environment, Error, FetchMany, FromEnvironment, KlaClientBuilder, KlaRequestBuilder,
-    OptRender, OutputBuilder, When,
+    Opt, OptRender, OutputBuilder, When,
 };
 use log::error;
 use regex::Regex;
@@ -118,6 +118,16 @@ async fn run() -> Result<(), Error> {
     let conf = Config::builder()
         .add_source(OptionalFile::new("config.toml", FileFormat::Toml))
         .add_source(OptionalFile::new("/etc/kla/config.toml", FileFormat::Toml))
+        .with_some(env::home_dir(), |config, dir| {
+            config.add_source(OptionalFile::new(
+                format!(
+                    "{}/.config/kla/config.toml",
+                    dir.into_os_string().to_string_lossy()
+                )
+                .as_str(),
+                FileFormat::Toml,
+            ))
+        })
         .set_default("default.environment", "/etc/kla/.default-environment")?
         .build()?;
 
@@ -125,6 +135,7 @@ async fn run() -> Result<(), Error> {
     // variable so it can be used everywhere
     if let Ok(default_environment) = fs::read_to_string(
         conf.get_string("default.environment")
+            .map(String::shell_expansion)
             .expect("default value"),
     ) {
         DEFAULT_ENV
@@ -311,6 +322,7 @@ fn run_switch(args: &ArgMatches, conf: &Config) -> Result<(), Error> {
     if let Some(selected) = selected {
         fs::write(
             conf.get_string("default.environment")
+                .map(String::shell_expansion)
                 .expect("default value"),
             selected,
         )?;
@@ -378,4 +390,24 @@ async fn run_root(args: &ArgMatches, conf: &Config) -> Result<(), Error> {
         .await?;
 
     Ok(())
+}
+
+// This trait does some string interpilation to turn paths into
+// more useful paths
+trait Expand {
+    fn shell_expansion(self) -> Self;
+}
+
+impl Expand for String {
+    // Does the following
+    // replaces ~ with the home directory
+    fn shell_expansion(self) -> Self {
+        self.replace(
+            "~",
+            env::home_dir()
+                .map(|b| b.to_string_lossy().to_string())
+                .unwrap_or(String::from("~"))
+                .as_str(),
+        )
+    }
 }

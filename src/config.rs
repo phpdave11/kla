@@ -1,13 +1,17 @@
 use clap::{command, Arg, ArgMatches, Command};
 use config::{
-    Config, ConfigError, File, FileFormat, FileSourceFile, FileStoredFormat, Map, Source, Value,
+    builder::DefaultState, Config, ConfigBuilder, ConfigError, File, FileFormat, FileSourceFile,
+    FileStoredFormat, Map, Source, Value,
 };
 use serde::Deserialize;
 use std::fmt::Debug;
 use std::path::Path;
 use tera::{Context, Tera};
 
-use crate::opt::{Ok, Opt};
+use crate::{
+    impl_opt,
+    opt::{Ok, Opt},
+};
 
 #[derive(Debug)]
 pub struct OptionalFile<F: FileStoredFormat + 'static>(Option<File<FileSourceFile, F>>);
@@ -404,3 +408,5 @@ impl TryFrom<ConfigArg> for Arg {
         Ok(arg)
     }
 }
+
+impl_opt!(ConfigBuilder<DefaultState>);
