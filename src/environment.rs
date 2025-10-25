@@ -11,7 +11,7 @@ use config::{builder::DefaultState, Config, ConfigBuilder, File};
 use serde::Deserialize;
 use skim::SkimItem;
 
-use crate::{Error, Result};
+use crate::{Error, Expand, Result};
 
 #[derive(Debug)]
 pub enum Environment {
@@ -47,6 +47,13 @@ impl Environment {
         match self {
             Environment::Endpoint(endpoint) => endpoint.create_url(uri),
             Environment::Empty => String::from(uri),
+        }
+    }
+
+    pub fn template_dir(&self) -> Option<&String> {
+        match self {
+            Environment::Endpoint(endpoint) => endpoint.template_dir(),
+            Environment::Empty => None,
         }
     }
 
@@ -93,6 +100,8 @@ impl Endpoint {
             endpoint.prefix.push_str("/");
         };
 
+        endpoint.template_dir = endpoint.template_dir.map(String::shell_expansion);
+
         Ok(endpoint)
     }
 
@@ -106,6 +115,11 @@ impl Endpoint {
         let mut url = self.prefix.clone();
         url.push_str(uri.trim_start_matches("/"));
         url
+    }
+
+    // template_dir returns the directory for the given environment
+    pub fn template_dir(&self) -> Option<&String> {
+        self.template_dir.as_ref()
     }
 
     /// walk_templates returns a WalkDir of all the templates in the

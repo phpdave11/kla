@@ -1,12 +1,13 @@
 use std::{env, ffi::OsString, fs, sync::Arc};
 
+use anyhow::Context as _;
 use clap::{arg, command, ArgAction, ArgMatches, Command};
 use config::{Config, FileFormat};
 use http::Method;
 use kla::{
     clap::DefaultValueIfSome,
     config::{CommandWithName, KlaTemplateConfig, OptionalFile, TemplateArgsContext},
-    Endpoint, Environment, Error, FetchMany, FromEnvironment, KlaClientBuilder, KlaRequestBuilder,
+    Endpoint, Environment, Expand, FetchMany, FromEnvironment, KlaClientBuilder, KlaRequestBuilder,
     OptRender, OutputBuilder, When,
 };
 use log::error;
@@ -65,9 +66,10 @@ fn command() -> Command {
         )
 }
 
-fn client(args: &ArgMatches) -> Result<Client, Error> {
+fn client(args: &ArgMatches) -> Result<Client, anyhow::Error> {
     let client = ClientBuilder::new()
-        .opt_header_agent(args.get_one("agent"))?
+        .opt_header_agent(args.get_one("agent"))
+        .with_context(|| format!("could not add agent: {:?}", args.get_one::<String>("agent")))?
         .gzip(
             !args
                 .get_one::<bool>("no-gzip")
@@ -97,10 +99,35 @@ fn client(args: &ArgMatches) -> Result<Client, Error> {
                 .map(|v| *v)
                 .unwrap_or_default(),
         )
-        .opt_proxy(args.get_one("proxy"), args.get_one("proxy-auth"))?
-        .opt_proxy_http(args.get_one("proxy-http"), args.get_one("proxy-auth"))?
-        .opt_proxy_https(args.get_one("proxy-https"), args.get_one("proxy-auth"))?
-        .opt_certificate(args.get_many("certificate"))?
+        .opt_proxy(args.get_one("proxy"), args.get_one("proxy-auth"))
+        .with_context(|| {
+            format!(
+                "could not add proxy: --proxy={:?} --proxy-auth={:?}",
+                args.get_one::<String>("proxy"),
+                args.get_one::<String>("proxy-auth")
+                    .map(|v| "*".repeat(v.len()))
+            )
+        })?
+        .opt_proxy_http(args.get_one("proxy-http"), args.get_one("proxy-auth"))
+        .with_context(|| {
+            format!(
+                "could not add proxy: --proxy-http={:?} --proxy-auth={:?}",
+                args.get_one::<String>("proxy-http"),
+                args.get_one::<String>("proxy-auth")
+                    .map(|v| "*".repeat(v.len()))
+            )
+        })?
+        .opt_proxy_https(args.get_one("proxy-https"), args.get_one("proxy-auth"))
+        .with_context(|| {
+            format!(
+                "could not add proxy: --proxy-https={:?} --proxy-auth={:?}",
+                args.get_one::<String>("proxy-https"),
+                args.get_one::<String>("proxy-auth")
+                    .map(|v| "*".repeat(v.len()))
+            )
+        })?
+        .opt_certificate(args.get_many("certificate"))
+        .with_context(|| format!("could not add certificate"))?
         .build()?;
     Ok(client)
 }
@@ -109,15 +136,21 @@ fn client(args: &ArgMatches) -> Result<Client, Error> {
 async fn main() {
     match run().await {
         Ok(_) => (),
-        Err(err) => error!("{}", err),
+        Err(err) => error!(
+            "{}",
+            err.chain().fold(String::new(), |mut f, err| {
+                f.push_str(err.to_string().as_str());
+                f.push_str("\n");
+                f
+            })
+        ),
     }
 }
 
-async fn run() -> Result<(), Error> {
+async fn run() -> Result<(), anyhow::Error> {
     colog::init();
 
     let conf = Config::builder()
-        .add_source(OptionalFile::new("config.toml", FileFormat::Toml))
         .add_source(OptionalFile::new("/etc/kla/config.toml", FileFormat::Toml))
         .add_source(OptionalFile::new(
             &"~/.config/kla/config.toml".shell_expansion(),
@@ -127,8 +160,10 @@ async fn run() -> Result<(), Error> {
             &"~/.kla.toml".shell_expansion(),
             FileFormat::Toml,
         ))
+        .add_source(OptionalFile::new("config.toml", FileFormat::Toml))
         .set_default("default.environment", "/etc/kla/.default-environment")?
-        .build()?;
+        .build()
+        .with_context(|| format!("could not load configuration"))?;
 
     // if the config file has a default environment we want to store it in a static
     // variable so it can be used everywhere
@@ -172,7 +207,7 @@ async fn run_run<S: Into<String>>(
     template: Option<S>,
     args: &ArgMatches,
     conf: &Config,
-) -> Result<(), Error> {
+) -> Result<(), anyhow::Error> {
     let verbose = args
         .get_one::<bool>("verbose")
         .map(|v| *v)
@@ -185,17 +220,28 @@ async fn run_run<S: Into<String>>(
         Some(template) => template,
     };
 
-    let env = Environment::new(args.get_one("env"), conf)?;
-    let tmpl_config = Config::builder()
-        .add_source_environment(&env, &template)?
-        .build()?;
+    let env = Environment::new(args.get_one("env"), conf).with_context(|| {
+        format!(
+            "could not load environment: {:?}",
+            args.get_one::<String>("env")
+        )
+    })?;
+
+    let tmpl_config = match Config::builder()
+        .add_source_environment(&env, &template)
+        .with_context(|| format!("could not load {} for environment {}", &template, &env))?
+        .build()
+    {
+        Ok(tmpl_config) => tmpl_config,
+        Err(_) => return run_run_empty(args, conf),
+    };
 
     let m = command()
         .subcommand(
             Command::new("run")
                 .about("run templates defined for the environment")
                 .alias("template")
-                .subcommand((&tmpl_config).command_with_name(&template)?),
+                .subcommand((&tmpl_config).command_with_name(&template).with_context(|| format!("environment {} with tempalte {} could not be rendered as command, is something wrong with the template?", &env, &template))?),
         )
         .get_matches();
 
@@ -211,27 +257,75 @@ async fn run_run<S: Into<String>>(
 
     let tmpl = Tera::default().with_kla_template(&tmpl_config)?;
     let client = client(&m)?;
-    let url = env.create_url(&tmpl.render("uri", &context)?);
-    let method = Method::try_from(tmpl.render("method", &context)?.to_uppercase().as_str())?;
-    let body = tmpl.render_some("body", &context)?;
+    let url = env.create_url(
+        &tmpl
+            .render("uri", &context)
+            .with_context(|| format!("could not render uri template"))?,
+    );
+    let method = tmpl
+        .render("method", &context)
+        .with_context(|| format!("could not render method template"))?
+        .to_uppercase();
+    let method = Method::try_from(method.as_str())
+        .with_context(|| format!("{} is not a valid method", &method))?;
+    let body = tmpl
+        .render_some("body", &context)
+        .with_context(|| format!("could not render body template"))?;
 
     let request = client
         .request(method.clone(), &url)
-        .opt_body(body.as_ref())?
-        .opt_headers(m.get_many("header"))?
-        .opt_headers(Some(tmpl.fetch_with_prefix("header", &context)))?
+        .opt_body(body.as_ref())
+        .with_context(|| format!("could not set body: {:?}", body.as_ref()))?
+        .opt_headers(m.get_many("header"))
+        .with_context(|| format!("could not set header: {:?}", m.get_many::<String>("header")))?
+        .opt_headers(Some(tmpl.fetch_with_prefix("header", &context)))
+        .with_context(|| {
+            format!(
+                "envrionment {} template {} headers could not be loaded",
+                &env, &template
+            )
+        })?
         .opt_bearer_auth(m.get_one("bearer-token"))
         .opt_basic_auth(m.get_one("basic-auth"))
-        .opt_query(m.get_many("query"))?
-        .opt_headers(Some(tmpl.fetch_with_prefix("query", &context)))?
-        .opt_form(m.get_many("form"))?
-        .opt_headers(Some(tmpl.fetch_with_prefix("form", &context)))?
-        .opt_timeout(m.get_one("timeout"))?
-        .opt_version(m.get_one("http-version"))?;
+        .opt_query(m.get_many("query"))
+        .with_context(|| {
+            format!(
+                "could not set query param: {:?}",
+                m.get_many::<String>("query")
+            )
+        })?
+        .opt_headers(Some(tmpl.fetch_with_prefix("query", &context)))
+        .with_context(|| {
+            format!(
+                "envrionment {} template {} query params could not be loaded",
+                &env, &template
+            )
+        })?
+        .opt_form(m.get_many("form"))
+        .with_context(|| format!("could not set form: {:?}", m.get_many::<String>("form")))?
+        .opt_headers(Some(tmpl.fetch_with_prefix("form", &context)))
+        .with_context(|| {
+            format!(
+                "envrionment {} template {} form params could not be loaded",
+                &env, &template
+            )
+        })?
+        .opt_timeout(m.get_one("timeout"))
+        .with_context(|| format!("{:?} is not a valid format", m.get_one::<String>("timeout")))?
+        .opt_version(m.get_one("http-version"))
+        .with_context(|| {
+            format!(
+                "{:?} is not a valid http-version",
+                m.get_one::<String>("http-version")
+            )
+        })?;
 
     let response = match args.get_one("dry").map(|b| *b).unwrap_or_default() {
         true => Response::from(http::Response::<Vec<u8>>::default()),
-        false => request.send().await?,
+        false => request
+            .send()
+            .await
+            .with_context(|| format!("request failed!"))?,
     };
 
     let succeed = response.status().is_success();
@@ -239,17 +333,25 @@ async fn run_run<S: Into<String>>(
     OutputBuilder::new(response)
         .opt_template(
             match succeed {
-                true => tmpl.render_some("output", &context)?,
-                false => tmpl.render_some("failure-output", &context)?,
+                true => tmpl.render_some("output", &context).with_context(|| {
+                    format!("The request was sent, but your output within environment {} template {} could not be rendered", &env, &template)
+                })?,
+                false => tmpl
+                    .render_some("failure-output", &context)
+                    .with_context(|| {
+                        format!("The request was sent, but your failure-output within environment {} template {} could not be rendered", &env, &template)
+                    })?,
             }
             .as_ref(),
-        )?
+        )
+        .with_context(|| format!("Your request was sent but the output or failure-output within environment {} template {} could not be parsed, run with -v to see if your request was successful", &env, &template))?
         .opt_template(match succeed {
             true => args.get_one("template"),
             false => args.get_one("failure-template"),
-        })?
+        })
+        .with_context(|| format!("Your request was sent but the --output or --failure-output could not be parsed, run with -v to see if your request was successful"))?
         .opt_output(args.get_one("output"))
-        .await?
+        .await.with_context(|| format!("could not set --output"))?
         .when(verbose, |config| {
             config.prelude_request(&method, &url, body.as_ref())
         })
@@ -257,24 +359,41 @@ async fn run_run<S: Into<String>>(
         .when(verbose, OutputBuilder::code_prelude)
         .when(verbose, OutputBuilder::header_prelude)
         .render()
-        .await?;
+        .await.with_context(|| format!("could not write output to specified location!"))?;
 
     Ok(())
 }
 
-fn run_run_empty(args: &ArgMatches, conf: &Config) -> Result<(), Error> {
-    let env = Environment::new(args.get_one("env"), conf)?;
+fn run_run_empty(args: &ArgMatches, conf: &Config) -> Result<(), anyhow::Error> {
+    let env = Environment::new(args.get_one("env"), conf).with_context(|| {
+        format!(
+            "could not load environment: {:?}",
+            args.get_one::<String>("env")
+        )
+    })?;
 
     let mut m = Command::new("run")
         .about("run templates defined for the environment")
         .alias("template")
         .arg_required_else_help(true);
+    let templates = env.templates().with_context(|| {
+        format!(
+            "could not fetch all templates for {:?} from {:?}",
+            &env,
+            env.template_dir()
+        )
+    })?;
 
-    for template in env.templates()? {
+    for template in templates {
         let tmpl_conf = Config::builder()
-            .add_source_environment(&env, &template)?
+            .add_source_environment(&env, &template)
+            .with_context(|| format!("could not load {} for environment {}", &template, &env))?
             .build()?;
-        m = m.subcommand(tmpl_conf.command_with_name(&template)?);
+        m = m.subcommand(tmpl_conf
+                .command_with_name(&template)
+                .with_context(|| format!("environment {} with tempalte {} could not be rendered as command, is something wrong with the template?", &env, &template)
+                )?
+            );
     }
 
     command().subcommand(m).get_matches();
@@ -282,16 +401,24 @@ fn run_run_empty(args: &ArgMatches, conf: &Config) -> Result<(), Error> {
     Ok(())
 }
 
-fn run_environments(args: &ArgMatches, conf: &Config) -> Result<(), Error> {
-    let r = Regex::new(args.get_one::<String>("regex").unwrap())?;
+fn run_environments(args: &ArgMatches, conf: &Config) -> Result<(), anyhow::Error> {
+    let r = Regex::new(args.get_one::<String>("regex").unwrap()).with_context(|| {
+        format!(
+            "invalid regex supplied {:?}",
+            args.get_one::<String>("regex")
+        )
+    })?;
 
     let environments = conf
-        .get_table("environment")?
+        .get_table("environment")
+        .with_context(|| format!("Could not load environments from config"))?
         .into_iter()
         .filter_map(|(k, v)| if r.is_match(&k) { Some((k, v)) } else { None });
 
     for (k, v) in environments {
-        let mut env: Endpoint = v.try_deserialize()?;
+        let mut env: Endpoint = v
+            .try_deserialize()
+            .with_context(|| format!("invalid endpoint {}", k))?;
         env.name = k;
         println!("{}", env);
     }
@@ -299,17 +426,25 @@ fn run_environments(args: &ArgMatches, conf: &Config) -> Result<(), Error> {
     Ok(())
 }
 
-fn run_switch(args: &ArgMatches, conf: &Config) -> Result<(), Error> {
+fn run_switch(args: &ArgMatches, conf: &Config) -> Result<(), anyhow::Error> {
     let (send, recv) = crossbeam_channel::unbounded();
-    let r = Regex::new(args.get_one::<String>("matcher").unwrap())?;
+    let r = Regex::new(args.get_one::<String>("matcher").unwrap()).with_context(|| {
+        format!(
+            "invalid regex supplied {:?}",
+            args.get_one::<String>("regex")
+        )
+    })?;
 
     let environments = conf
-        .get_table("environment")?
+        .get_table("environment")
+        .with_context(|| format!("Could not load environments from config"))?
         .into_iter()
         .filter_map(|(k, v)| if r.is_match(&k) { Some((k, v)) } else { None });
 
     for (name, val) in environments {
-        let mut endpoint: Endpoint = val.try_deserialize()?;
+        let mut endpoint: Endpoint = val
+            .try_deserialize()
+            .with_context(|| format!("invalid endpoint {}", name))?;
         endpoint.name = name;
         let endpoint: Arc<dyn SkimItem> = Arc::new(endpoint);
         send.send(endpoint).unwrap();
@@ -327,21 +462,31 @@ fn run_switch(args: &ArgMatches, conf: &Config) -> Result<(), Error> {
         .next()
         .map(|v| v.text().to_string());
 
+    let environment_file = conf
+        .get_string("default.environment")
+        .map(String::shell_expansion)
+        .expect("default value");
+
     if let Some(selected) = selected {
-        fs::write(
-            conf.get_string("default.environment")
-                .map(String::shell_expansion)
-                .expect("default value"),
-            selected,
-        )?;
+        fs::write(&environment_file, selected).with_context(|| {
+            format!(
+                "could not write current environment file to {}",
+                &environment_file
+            )
+        })?;
     }
 
     Ok(())
 }
 
 // run_root will run the command with no arguments
-async fn run_root(args: &ArgMatches, conf: &Config) -> Result<(), Error> {
-    let env = Environment::new(args.get_one("env"), conf)?;
+async fn run_root(args: &ArgMatches, conf: &Config) -> Result<(), anyhow::Error> {
+    let env = Environment::new(args.get_one("env"), conf).with_context(|| {
+        format!(
+            "could not load environment: {:?}",
+            args.get_one::<String>("env")
+        )
+    })?;
 
     let verbose = args
         .get_one::<bool>("verbose")
@@ -356,7 +501,13 @@ async fn run_root(args: &ArgMatches, conf: &Config) -> Result<(), Error> {
                     .expect("required")
                     .to_uppercase()
                     .as_str(),
-            )?,
+            )
+            .with_context(|| {
+                format!(
+                    "{:?} is not a valid method",
+                    args.get_one::<String>("method-or-url")
+                )
+            })?,
         )
     } else {
         (
@@ -370,18 +521,52 @@ async fn run_root(args: &ArgMatches, conf: &Config) -> Result<(), Error> {
 
     let request = client
         .request(method, url)
-        .opt_body(args.get_one("body"))?
-        .opt_headers(args.get_many("header"))?
+        .opt_body(args.get_one("body"))
+        .with_context(|| format!("could not set body: {:?}", args.get_one::<String>("body")))?
+        .opt_headers(args.get_many("header"))
+        .with_context(|| {
+            format!(
+                "could not set header: {:?}",
+                args.get_many::<String>("header")
+            )
+        })?
         .opt_bearer_auth(args.get_one("bearer-token"))
         .opt_basic_auth(args.get_one("basic-auth"))
-        .opt_query(args.get_many("query"))?
-        .opt_form(args.get_many("form"))?
-        .opt_timeout(args.get_one("timeout"))?
-        .opt_version(args.get_one("http-version"))?;
+        .opt_query(args.get_many("query"))
+        .with_context(|| {
+            format!(
+                "could not set query param: {:?}",
+                args.get_many::<String>("query")
+            )
+        })?
+        .opt_form(args.get_many("form"))
+        .with_context(|| {
+            format!(
+                "could not set form param: {:?}",
+                args.get_many::<String>("form")
+            )
+        })?
+        .opt_timeout(args.get_one("timeout"))
+        .with_context(|| {
+            format!(
+                "{:?} is not a valid format",
+                args.get_one::<String>("timeout")
+            )
+        })?
+        .opt_version(args.get_one("http-version"))
+        .with_context(|| {
+            format!(
+                "{:?} is not a valid http-version",
+                args.get_one::<String>("http-version")
+            )
+        })?;
 
     let response = match args.get_one("dry").map(|b| *b).unwrap_or_default() {
         true => Response::from(http::Response::<Vec<u8>>::default()),
-        false => request.send().await?,
+        false => request
+            .send()
+            .await
+            .with_context(|| format!("request failed!"))?,
     };
 
     let succeed = response.status().is_success();
@@ -391,42 +576,16 @@ async fn run_root(args: &ArgMatches, conf: &Config) -> Result<(), Error> {
             args.get_one("template")
         } else {
             args.get_one("failure-template")
-        })?
+        })
+        .with_context(|| format!("Your request was sent but the --output or --failure-output could not be parsed, run with -v to see if your request was successful"))?
         .when(verbose, OutputBuilder::version_prelude)
         .when(verbose, OutputBuilder::code_prelude)
         .when(verbose, OutputBuilder::header_prelude)
         .opt_output(args.get_one("output"))
-        .await?
+        .await
+        .with_context(|| format!("could not set --output"))?
         .render()
-        .await?;
+        .await.with_context(|| format!("could not write output to specified location!"))?;
 
     Ok(())
-}
-
-// This trait does some string interpilation to turn paths into
-// more useful paths
-trait Expand {
-    fn shell_expansion(self) -> String;
-}
-
-impl Expand for String {
-    // Does the following
-    // replaces ~ with the home directory
-    fn shell_expansion(self) -> String {
-        self.replace(
-            "~",
-            env::home_dir()
-                .map(|b| b.to_string_lossy().to_string())
-                .unwrap_or(String::from("~"))
-                .as_str(),
-        )
-    }
-}
-
-impl Expand for &str {
-    // Does the following
-    // replaces ~ with the home directory
-    fn shell_expansion(self) -> String {
-        self.to_string().shell_expansion()
-    }
 }

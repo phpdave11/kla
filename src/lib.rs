@@ -6,6 +6,8 @@ mod output; // managing the output of kla
 mod request; // traits and impl for extending request and requestbuilder
 mod template; // templating responses
 
+use std::env;
+
 pub use client::*;
 pub use environment::*;
 pub use error::*;
@@ -17,3 +19,39 @@ pub use template::*;
 // extending the functionality of our dependancies
 pub mod clap;
 pub mod config;
+
+// This trait does some string interpilation to turn paths into
+// more useful paths
+pub trait Expand {
+    fn shell_expansion(self) -> String;
+}
+
+impl Expand for &str {
+    // Does the following
+    // replaces ~ with the home directory
+    fn shell_expansion(self) -> String {
+        self.replace(
+            "~",
+            env::home_dir()
+                .map(|b| b.to_string_lossy().to_string())
+                .unwrap_or(String::from("~"))
+                .as_str(),
+        )
+    }
+}
+
+impl Expand for String {
+    // Does the following
+    // replaces ~ with the home directory
+    fn shell_expansion(self) -> String {
+        self.as_str().shell_expansion()
+    }
+}
+
+impl Expand for &String {
+    // Does the following
+    // replaces ~ with the home directory
+    fn shell_expansion(self) -> String {
+        self.as_str().shell_expansion()
+    }
+}
