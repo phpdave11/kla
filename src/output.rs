@@ -73,7 +73,7 @@ impl OutputBuilder {
 
     // header_prelude adds a header to the prelude
     pub fn header_prelude(mut self) -> Self {
-        let mut buf = String::from("Response Headers");
+        let mut buf = String::from("Response Headers\n");
 
         for (key, val) in self.response.headers() {
             buf.push_str(format!("\t{}: {:?}\n", key.as_str(), val).as_str());
