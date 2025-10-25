@@ -11,7 +11,7 @@ use kla::{
 };
 use log::error;
 use regex::Regex;
-use reqwest::{Client, ClientBuilder};
+use reqwest::{Client, ClientBuilder, Response};
 use skim::{prelude::SkimOptionsBuilder, Skim, SkimItem};
 use tera::{Context, Tera};
 use tokio::sync::OnceCell;
@@ -46,6 +46,7 @@ fn command() -> Command {
         .arg(arg!(--"proxy-https" <PROXY_HTTPS> "The proxy to use for https requests."))
         .arg(arg!(--"proxy-auth" <PROXY_AUTH> "The username and password seperated by :."))
         .arg(arg!(--"connect-timeout" <DURATION> "The amount of time to allow for connection"))
+        .arg(arg!(--"aws-sign-v4" [API_KEY] [SECRET_KEY] "Sign the request with AWS v4 Signature"))
         .arg(arg!(--certificate <CERTIFICATE_FILE> "The path to the certificate to use for requests. Accepts PEM and DER, expects files to end in .der or .pem. defaults to pem").action(ArgAction::Append))
         .arg(arg!("method-or-url": [METHOD_OR_URL] "The URL path (with an assumed GET method) OR the method if another argument is supplied"))
         .arg(arg!(url: [URL] "The URL path when a method is supplied"))
@@ -212,10 +213,11 @@ async fn run_run<S: Into<String>>(
     let client = client(&m)?;
     let url = env.create_url(&tmpl.render("uri", &context)?);
     let method = Method::try_from(tmpl.render("method", &context)?.to_uppercase().as_str())?;
+    let body = tmpl.render_some("body", &context)?;
 
-    let response = client
-        .request(method, url)
-        .opt_body(tmpl.render_some("body", &context)?.as_ref())?
+    let request = client
+        .request(method.clone(), &url)
+        .opt_body(body.as_ref())?
         .opt_headers(m.get_many("header"))?
         .opt_headers(Some(tmpl.fetch_with_prefix("header", &context)))?
         .opt_bearer_auth(m.get_one("bearer-token"))
@@ -225,9 +227,12 @@ async fn run_run<S: Into<String>>(
         .opt_form(m.get_many("form"))?
         .opt_headers(Some(tmpl.fetch_with_prefix("form", &context)))?
         .opt_timeout(m.get_one("timeout"))?
-        .opt_version(m.get_one("http-version"))?
-        .send()
-        .await?;
+        .opt_version(m.get_one("http-version"))?;
+
+    let response = match args.get_one("dry").map(|b| *b).unwrap_or_default() {
+        true => Response::from(http::Response::<Vec<u8>>::default()),
+        false => request.send().await?,
+    };
 
     let succeed = response.status().is_success();
 
@@ -245,6 +250,11 @@ async fn run_run<S: Into<String>>(
         })?
         .opt_output(args.get_one("output"))
         .await?
+        .when(verbose, |config| {
+            config.prelude_request(&method, &url, body.as_ref())
+        })
+        .when(verbose, OutputBuilder::version_prelude)
+        .when(verbose, OutputBuilder::code_prelude)
         .when(verbose, OutputBuilder::header_prelude)
         .render()
         .await?;
@@ -358,7 +368,7 @@ async fn run_root(args: &ArgMatches, conf: &Config) -> Result<(), Error> {
     let url = env.create_url(uri);
     let client = client(args)?;
 
-    let response = client
+    let request = client
         .request(method, url)
         .opt_body(args.get_one("body"))?
         .opt_headers(args.get_many("header"))?
@@ -367,9 +377,12 @@ async fn run_root(args: &ArgMatches, conf: &Config) -> Result<(), Error> {
         .opt_query(args.get_many("query"))?
         .opt_form(args.get_many("form"))?
         .opt_timeout(args.get_one("timeout"))?
-        .opt_version(args.get_one("http-version"))?
-        .send()
-        .await?;
+        .opt_version(args.get_one("http-version"))?;
+
+    let response = match args.get_one("dry").map(|b| *b).unwrap_or_default() {
+        true => Response::from(http::Response::<Vec<u8>>::default()),
+        false => request.send().await?,
+    };
 
     let succeed = response.status().is_success();
 

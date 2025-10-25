@@ -1,6 +1,7 @@
 use std::pin::Pin;
 
-use crate::{impl_when, ContextBuilder, FetchMany, Result};
+use crate::{impl_opt, impl_when, ContextBuilder, FetchMany, Result};
+use http::Method;
 use reqwest::Response;
 use tera::Tera;
 use tokio::{
@@ -68,6 +69,18 @@ impl OutputBuilder {
     // output sets the output of kla. This defaults to standard out
     pub fn output(mut self, output: Pin<Box<dyn tokio::io::AsyncWrite>>) -> Self {
         self.output = output;
+        self
+    }
+
+    pub fn prelude_request<S>(mut self, method: &Method, url: &str, body: Option<S>) -> Self
+    where
+        S: Into<String>,
+    {
+        self.prelude.push(format!("Request: {}: {}", method, &url));
+        if let Some(body) = body {
+            self.prelude.push(body.into());
+        }
+
         self
     }
 
@@ -157,3 +170,4 @@ impl OutputBuilder {
 }
 
 impl_when!(OutputBuilder);
+impl_opt!(OutputBuilder);
