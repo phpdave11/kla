@@ -1,7 +1,8 @@
 use std::pin::Pin;
 
-use crate::{ContextBuilder, Result, Template, TemplateBuilder};
+use crate::{impl_when, ContextBuilder, FetchMany, Result};
 use reqwest::Response;
+use tera::Tera;
 use tokio::{
     fs::File,
     io::{stdout, AsyncWriteExt},
@@ -10,9 +11,15 @@ use tokio::{
 // OutputBuilder collects all the info needed to render the output once
 // kla has made the http request. (or reqwest rather)
 pub struct OutputBuilder {
+    // response is the http response that we got
     response: Response,
+    // tmpl holds all the templates
+    tmpl: Tera,
+    prelude: Vec<String>,
+
+    // output
+    prelude_output: Option<Pin<Box<dyn tokio::io::AsyncWrite>>>,
     output: Pin<Box<dyn tokio::io::AsyncWrite>>,
-    template: Option<String>,
 }
 
 impl OutputBuilder {
@@ -22,19 +29,38 @@ impl OutputBuilder {
         OutputBuilder {
             response: resp,
             output: Box::pin(stdout()),
-            template: None,
+            prelude_output: None,
+            tmpl: Tera::default(),
+            prelude: vec![],
         }
     }
 
-    // opt_output takes a command line argument and turns it into an output.
-    // the value Some(`-`) will output to standard out as will None
-    // any value passed is interpreted as a file path, and a new file
-    // is created
+    /// opt_output takes a command line argument and turns it into an output.
+    /// the value Some(`-`) will output to standard out as will None
+    /// any value passed is interpreted as a file path, and a new file
+    /// is created.
+    /// This output is used as the output location of the main body or template
+    /// output of the request. Defaults to standard out
     pub async fn opt_output(mut self, output: Option<&String>) -> Result<Self> {
         self.output = match output.map(|v| v.as_str()) {
             Some("-") => Box::pin(stdout()),
             Some(output) => Box::pin(File::create_new(output).await?),
             None => Box::pin(stdout()),
+        };
+        Ok(self)
+    }
+
+    /// opt_prelude_output takes a command line argument and turns it into an output.
+    /// the value Some(`-`) will output to standard out as will None
+    /// any value passed is interpreted as a file path, and a new file
+    /// is created
+    /// This output is used as the location of the prelude (Headers, etc) Defaults to
+    /// main body output
+    pub async fn opt_prelude_output(mut self, output: Option<&String>) -> Result<Self> {
+        self.prelude_output = match output.map(|v| v.as_str()) {
+            Some("-") => Some(Box::pin(stdout())),
+            Some(output) => Some(Box::pin(File::create_new(output).await?)),
+            None => None,
         };
         Ok(self)
     }
@@ -45,64 +71,89 @@ impl OutputBuilder {
         self
     }
 
-    // opt template sets the template
-    pub fn opt_template(mut self, template: Option<&String>) -> Self {
-        self.template = template.map(|k| k.clone());
+    // header_prelude adds a header to the prelude
+    pub fn header_prelude(mut self) -> Self {
+        let mut buf = String::from("Response Headers");
+
+        for (key, val) in self.response.headers() {
+            buf.push_str(format!("\t{}: {:?}\n", key.as_str(), val).as_str());
+        }
+        self.prelude.push(buf);
         self
     }
 
-    // build creates the output
-    pub async fn build(self) -> Result<Output> {
-        let OutputBuilder {
-            response,
-            output,
-            template,
-        } = self;
+    // header_prelude adds a header to the prelude
+    pub fn code_prelude(mut self) -> Self {
+        self.prelude.push(format!("{}", self.response.status()));
+        self
+    }
 
-        let output = match template {
-            Some(template) => {
-                let context = ContextBuilder::new()
-                    .insert_response(response)
-                    .await?
-                    .build();
+    // header_prelude adds a header to the prelude
+    pub fn version_prelude(mut self) -> Self {
+        self.prelude
+            .push(format!("Version: {:?}", self.response.version()));
+        self
+    }
 
-                let template = TemplateBuilder::new(output)
-                    .context(context)
-                    .template(template.as_ref())?
-                    .build()?;
+    // output sets the output of kla. This defaults to standard out
+    pub fn prelude_output(mut self, output: Pin<Box<dyn tokio::io::AsyncWrite>>) -> Self {
+        self.prelude_output = Some(output);
+        self
+    }
 
-                Output::Template(template)
-            }
-            None => Output::Response(response, output),
+    // opt template sets the template
+    pub fn opt_template(mut self, template: Option<&String>) -> Result<Self> {
+        let template = match template {
+            Some(template) => template,
+            None => return Ok(self),
         };
 
-        Ok(output)
+        // TODO: Add ability to reference files or standard input
+        self.tmpl.add_raw_template("body", template)?;
+        Ok(self)
     }
-}
 
-// OutputContext holds the actual data. This may be the template context if a template
-// is set or the response if we are handling output manually
-pub enum Output {
-    // Template holds the template and context we want to run
-    Template(Template),
-    // Response holds onto the actual response so we can process
-    // it manually
-    Response(reqwest::Response, Pin<Box<dyn tokio::io::AsyncWrite>>),
-    // do not output anything
-    None,
-}
+    // build creates the output
+    pub async fn render(self) -> Result<()> {
+        let OutputBuilder {
+            mut response,
+            tmpl,
+            mut prelude_output,
+            mut output,
+            prelude,
+        } = self;
 
-impl Output {
-    pub async fn output(self) -> Result<()> {
-        match self {
-            Self::Template(tmpl) => tmpl.render().await,
-            Self::Response(mut resp, mut writer) => {
-                while let Some(chunk) = resp.chunk().await? {
-                    writer.write_all(chunk.as_ref()).await?;
-                }
-                Ok(())
+        let prelude_output = prelude_output.as_mut().unwrap_or(&mut output);
+        for item in prelude {
+            let lines = item.split("\n");
+            for line in lines {
+                prelude_output.write_all("> ".as_bytes()).await?;
+                prelude_output.write_all(line.as_bytes()).await?;
+                prelude_output.write_all("\n".as_bytes()).await?;
             }
-            Self::None => Ok(()),
         }
+
+        // Write the body output
+        match tmpl.has("body") {
+            true => {
+                let buf = tmpl.render(
+                    "body",
+                    &ContextBuilder::new()
+                        .insert_response(response)
+                        .await?
+                        .build(),
+                )?;
+                output.write_all(buf.as_bytes()).await?;
+            }
+            false => {
+                while let Some(chunk) = response.chunk().await? {
+                    output.write_all(chunk.as_ref()).await?;
+                }
+            }
+        }
+
+        Ok(())
     }
 }
+
+impl_when!(OutputBuilder);

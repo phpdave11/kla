@@ -1,5 +1,3 @@
-// use std::ffi::OsString;
-
 use std::{ffi::OsString, fs, sync::Arc};
 
 use clap::{arg, command, ArgAction, ArgMatches, Command};
@@ -9,7 +7,7 @@ use kla::{
     clap::DefaultValueIfSome,
     config::{CommandWithName, KlaTemplateConfig, OptionalFile, TemplateArgsContext},
     Endpoint, Environment, Error, FetchMany, FromEnvironment, KlaClientBuilder, KlaRequestBuilder,
-    OptRender, OutputBuilder,
+    OptRender, OutputBuilder, When,
 };
 use log::error;
 use regex::Regex;
@@ -165,6 +163,11 @@ async fn run_run<S: Into<String>>(
     args: &ArgMatches,
     conf: &Config,
 ) -> Result<(), Error> {
+    let verbose = args
+        .get_one::<bool>("verbose")
+        .map(|v| *v)
+        .unwrap_or_default();
+
     let template: String = match template.map(|s| s.into()) {
         None => return run_run_empty(args, conf),
         Some(template) if template == "help" => return run_run_empty(args, conf),
@@ -205,13 +208,13 @@ async fn run_run<S: Into<String>>(
         .request(method, url)
         .opt_body(tmpl.render_some("body", &context)?.as_ref())?
         .opt_headers(m.get_many("header"))?
-        .opt_headers(Some(tmpl.fetch_many("header", &context)))?
+        .opt_headers(Some(tmpl.fetch_with_prefix("header", &context)))?
         .opt_bearer_auth(m.get_one("bearer-token"))
         .opt_basic_auth(m.get_one("basic-auth"))
         .opt_query(m.get_many("query"))?
-        .opt_headers(Some(tmpl.fetch_many("query", &context)))?
+        .opt_headers(Some(tmpl.fetch_with_prefix("query", &context)))?
         .opt_form(m.get_many("form"))?
-        .opt_headers(Some(tmpl.fetch_many("form", &context)))?
+        .opt_headers(Some(tmpl.fetch_with_prefix("form", &context)))?
         .opt_timeout(m.get_one("timeout"))?
         .opt_version(m.get_one("http-version"))?
         .send()
@@ -226,16 +229,15 @@ async fn run_run<S: Into<String>>(
                 false => tmpl.render_some("failure-output", &context)?,
             }
             .as_ref(),
-        )
+        )?
         .opt_template(match succeed {
             true => args.get_one("template"),
             false => args.get_one("failure-template"),
-        })
+        })?
         .opt_output(args.get_one("output"))
         .await?
-        .build()
-        .await?
-        .output()
+        .when(verbose, OutputBuilder::header_prelude)
+        .render()
         .await?;
 
     Ok(())
@@ -321,6 +323,11 @@ fn run_switch(args: &ArgMatches, conf: &Config) -> Result<(), Error> {
 async fn run_root(args: &ArgMatches, conf: &Config) -> Result<(), Error> {
     let env = Environment::new(args.get_one("env"), conf)?;
 
+    let verbose = args
+        .get_one::<bool>("verbose")
+        .map(|v| *v)
+        .unwrap_or_default();
+
     let (uri, method) = if let Some(uri) = args.get_one::<String>("url") {
         (
             uri,
@@ -361,12 +368,13 @@ async fn run_root(args: &ArgMatches, conf: &Config) -> Result<(), Error> {
             args.get_one("template")
         } else {
             args.get_one("failure-template")
-        })
+        })?
+        .when(verbose, OutputBuilder::version_prelude)
+        .when(verbose, OutputBuilder::code_prelude)
+        .when(verbose, OutputBuilder::header_prelude)
         .opt_output(args.get_one("output"))
         .await?
-        .build()
-        .await?
-        .output()
+        .render()
         .await?;
 
     Ok(())

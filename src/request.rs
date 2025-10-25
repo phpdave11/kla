@@ -53,10 +53,12 @@ impl TryFrom<&String> for KeyValue {
 impl<'a> TryFrom<RenderGroup<'a>> for KeyValue {
     type Error = crate::Error;
 
-    fn try_from(value: RenderGroup) -> std::result::Result<Self, Self::Error> {
+    fn try_from(value: RenderGroup<'a>) -> std::result::Result<Self, Self::Error> {
+        let tmpl_output = value.render()?;
+
         let kv = KeyValue {
-            name: value.name.into(),
-            value: value.tmpl.render(value.name, value.context)?,
+            name: value.name,
+            value: tmpl_output,
         };
         Ok(kv)
     }

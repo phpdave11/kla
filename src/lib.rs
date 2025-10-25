@@ -9,6 +9,7 @@ mod template; // templating responses
 pub use client::*;
 pub use environment::*;
 pub use error::*;
+pub use opt::*;
 pub use output::*;
 pub use request::*;
 pub use template::*;

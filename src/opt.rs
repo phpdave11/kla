@@ -12,6 +12,13 @@ pub trait Opt: Sized {
         F: Fn(Self, T) -> Self;
 }
 
+pub trait When: Sized {
+    /// when calls the underlying builder function if v is true
+    fn when<F>(self, v: bool, f: F) -> Self
+    where
+        F: Fn(Self) -> Self;
+}
+
 pub trait Ok: Sized {
     /// Error is the type of error value shared between the result coming from the underlying
     /// closure, and the incoming value
@@ -62,6 +69,23 @@ macro_rules! impl_opt {
                 match v {
                     Some(v) => f(self, v),
                     None => self,
+                }
+            }
+        }
+    };
+}
+
+#[macro_export]
+macro_rules! impl_when {
+    ($for:ty) => {
+        impl crate::opt::When for $for {
+            fn when<F>(self, v: bool, f: F) -> Self
+            where
+                F: Fn(Self) -> Self,
+            {
+                match v {
+                    true => f(self),
+                    false => self,
                 }
             }
         }

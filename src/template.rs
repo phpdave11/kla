@@ -189,31 +189,67 @@ impl OptRender for Tera {
 }
 
 pub trait FetchMany {
-    fn fetch_many<'a>(
+    fn has(&self, name: &str) -> bool;
+    /// fetch_with_prefix will fetch a RenderGroup of the templates that have the prefixed name.
+    fn fetch_with_prefix<'a>(
         &'a self,
         prefix: &'a str,
-        context: &'a Context,
+        context: &Context,
     ) -> impl Iterator<Item = RenderGroup<'a>>;
+
+    /// fetch_many will fetch a RenderGroup of all the templates.
+    fn fetch_all<'a>(&'a self, context: &Context) -> impl Iterator<Item = RenderGroup<'a>>;
 }
 
 impl FetchMany for Tera {
-    fn fetch_many<'a>(
+    fn has<'a>(&self, name: &str) -> bool {
+        self.get_template_names()
+            .filter(move |tmpl| *tmpl == name)
+            .next()
+            .is_some()
+    }
+
+    /// fetch_with_prefix will fetch a RenderGroup of the templates that have the prefixed name.
+    fn fetch_with_prefix<'a>(
         &'a self,
         prefix: &'a str,
-        context: &'a Context,
+        context: &Context,
     ) -> impl Iterator<Item = RenderGroup<'a>> {
         self.get_template_names()
             .filter(move |tmpl| tmpl.starts_with(prefix))
-            .map(|f| RenderGroup {
-                name: f,
+            .map(move |f| RenderGroup {
+                name: f.into(),
                 tmpl: self,
-                context: context,
+                context: context.clone(),
             })
+    }
+
+    /// fetch_many will fetch a RenderGroup of all the templates.
+    fn fetch_all<'a>(&'a self, context: &Context) -> impl Iterator<Item = RenderGroup<'a>> {
+        self.get_template_names().map(move |f| RenderGroup {
+            name: f.into(),
+            tmpl: self,
+            context: context.clone(),
+        })
     }
 }
 
+/// A RenderGroup has all the context required to render a template held within
+/// a Tera object.
 pub struct RenderGroup<'a> {
-    pub name: &'a str,
+    pub name: String,
     pub tmpl: &'a Tera,
-    pub context: &'a Context,
+    pub context: Context,
+}
+
+impl<'a> RenderGroup<'a> {
+    /// render will output the value of the evaluated template
+    pub fn render(&self) -> std::result::Result<String, tera::Error> {
+        self.tmpl.render(self.name.as_str(), &self.context)
+    }
+
+    /// return the name of the template which will be rendered
+    pub fn name(&self) -> &str {
+        self.name.as_str()
+    }
 }
