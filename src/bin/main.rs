@@ -7,7 +7,7 @@ use kla::{
     clap::DefaultValueIfSome,
     config::{CommandWithName, KlaTemplateConfig, OptionalFile, TemplateArgsContext},
     Endpoint, Environment, Error, FetchMany, FromEnvironment, KlaClientBuilder, KlaRequestBuilder,
-    Opt, OptRender, OutputBuilder, When,
+    OptRender, OutputBuilder, When,
 };
 use log::error;
 use regex::Regex;
@@ -118,16 +118,14 @@ async fn run() -> Result<(), Error> {
     let conf = Config::builder()
         .add_source(OptionalFile::new("config.toml", FileFormat::Toml))
         .add_source(OptionalFile::new("/etc/kla/config.toml", FileFormat::Toml))
-        .with_some(env::home_dir(), |config, dir| {
-            config.add_source(OptionalFile::new(
-                format!(
-                    "{}/.config/kla/config.toml",
-                    dir.into_os_string().to_string_lossy()
-                )
-                .as_str(),
-                FileFormat::Toml,
-            ))
-        })
+        .add_source(OptionalFile::new(
+            &"~/.config/kla/config.toml".shell_expansion(),
+            FileFormat::Toml,
+        ))
+        .add_source(OptionalFile::new(
+            &"~/.kla.toml".shell_expansion(),
+            FileFormat::Toml,
+        ))
         .set_default("default.environment", "/etc/kla/.default-environment")?
         .build()?;
 
@@ -395,13 +393,13 @@ async fn run_root(args: &ArgMatches, conf: &Config) -> Result<(), Error> {
 // This trait does some string interpilation to turn paths into
 // more useful paths
 trait Expand {
-    fn shell_expansion(self) -> Self;
+    fn shell_expansion(self) -> String;
 }
 
 impl Expand for String {
     // Does the following
     // replaces ~ with the home directory
-    fn shell_expansion(self) -> Self {
+    fn shell_expansion(self) -> String {
         self.replace(
             "~",
             env::home_dir()
@@ -409,5 +407,13 @@ impl Expand for String {
                 .unwrap_or(String::from("~"))
                 .as_str(),
         )
+    }
+}
+
+impl Expand for &str {
+    // Does the following
+    // replaces ~ with the home directory
+    fn shell_expansion(self) -> String {
+        self.to_string().shell_expansion()
     }
 }
