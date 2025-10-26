@@ -12,7 +12,7 @@ use kla::{
 };
 use log::error;
 use regex::Regex;
-use reqwest::{Client, ClientBuilder, Response};
+use reqwest::{ClientBuilder, Response};
 use skim::{prelude::SkimOptionsBuilder, Skim, SkimItem};
 use tera::{Context, Tera};
 use tokio::sync::OnceCell;
