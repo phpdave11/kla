@@ -47,7 +47,7 @@ fn command() -> Command {
         .arg(arg!(--"proxy-https" <PROXY_HTTPS> "The proxy to use for https requests."))
         .arg(arg!(--"proxy-auth" <PROXY_AUTH> "The username and password seperated by :."))
         .arg(arg!(--"connect-timeout" <DURATION> "The amount of time to allow for connection"))
-        .arg(arg!(--"aws-sign-v4" [API_KEY] [SECRET_KEY] "Sign the request with AWS v4 Signature"))
+        .arg(arg!(--"aws-sign-v4" "Sign the request with AWS v4 Signature").action(ArgAction::SetTrue))
         .arg(arg!(--certificate <CERTIFICATE_FILE> "The path to the certificate to use for requests. Accepts PEM and DER, expects files to end in .der or .pem. defaults to pem").action(ArgAction::Append))
         .arg(arg!("method-or-url": [METHOD_OR_URL] "The URL path (with an assumed GET method) OR the method if another argument is supplied"))
         .arg(arg!(url: [URL] "The URL path when a method is supplied"))
@@ -66,8 +66,8 @@ fn command() -> Command {
         )
 }
 
-fn client(args: &ArgMatches) -> Result<Client, anyhow::Error> {
-    let client = ClientBuilder::new()
+fn args_client(args: &ArgMatches) -> Result<ClientBuilder, anyhow::Error> {
+    let client_builder = ClientBuilder::new()
         .opt_header_agent(args.get_one("agent"))
         .with_context(|| format!("could not add agent: {:?}", args.get_one::<String>("agent")))?
         .gzip(
@@ -127,9 +127,8 @@ fn client(args: &ArgMatches) -> Result<Client, anyhow::Error> {
             )
         })?
         .opt_certificate(args.get_many("certificate"))
-        .with_context(|| format!("could not add certificate"))?
-        .build()?;
-    Ok(client)
+        .with_context(|| format!("could not add certificate"))?;
+    Ok(client_builder)
 }
 
 #[tokio::main]
@@ -229,7 +228,13 @@ async fn run_run<S: Into<String>>(
 
     let tmpl_config = match Config::builder()
         .add_source_environment(&env, &template)
-        .with_context(|| format!("could not load {} for environment {}", &template, &env))?
+        .with_context(|| {
+            format!(
+                "could not load {} for environment {:?}",
+                &template,
+                env.name(),
+            )
+        })?
         .build()
     {
         Ok(tmpl_config) => tmpl_config,
@@ -241,7 +246,7 @@ async fn run_run<S: Into<String>>(
             Command::new("run")
                 .about("run templates defined for the environment")
                 .alias("template")
-                .subcommand((&tmpl_config).command_with_name(&template).with_context(|| format!("environment {} with tempalte {} could not be rendered as command, is something wrong with the template?", &env, &template))?),
+                .subcommand((&tmpl_config).command_with_name(&template).with_context(|| format!("environment {:?} with tempalte {} could not be rendered as command, is something wrong with the template?", env.name(), &template))?),
         )
         .get_matches();
 
@@ -256,7 +261,7 @@ async fn run_run<S: Into<String>>(
     let context = Context::new().template_args(&tmpl_config, &tmpl_m)?;
 
     let tmpl = Tera::default().with_kla_template(&tmpl_config)?;
-    let client = client(&m)?;
+    let client = args_client(&m)?.build()?;
     let url = env.create_url(
         &tmpl
             .render("uri", &context)
@@ -281,8 +286,9 @@ async fn run_run<S: Into<String>>(
         .opt_headers(Some(tmpl.fetch_with_prefix("header", &context)))
         .with_context(|| {
             format!(
-                "envrionment {} template {} headers could not be loaded",
-                &env, &template
+                "envrionment {:?} template {} headers could not be loaded",
+                env.name(),
+                &template
             )
         })?
         .opt_bearer_auth(m.get_one("bearer-token"))
@@ -297,8 +303,9 @@ async fn run_run<S: Into<String>>(
         .opt_headers(Some(tmpl.fetch_with_prefix("query", &context)))
         .with_context(|| {
             format!(
-                "envrionment {} template {} query params could not be loaded",
-                &env, &template
+                "envrionment {:?} template {} query params could not be loaded",
+                env.name(),
+                &template
             )
         })?
         .opt_form(m.get_many("form"))
@@ -306,8 +313,9 @@ async fn run_run<S: Into<String>>(
         .opt_headers(Some(tmpl.fetch_with_prefix("form", &context)))
         .with_context(|| {
             format!(
-                "envrionment {} template {} form params could not be loaded",
-                &env, &template
+                "envrionment {:?} template {} form params could not be loaded",
+                env.name(),
+                &template
             )
         })?
         .opt_timeout(m.get_one("timeout"))
@@ -334,17 +342,17 @@ async fn run_run<S: Into<String>>(
         .opt_template(
             match succeed {
                 true => tmpl.render_some("output", &context).with_context(|| {
-                    format!("The request was sent, but your output within environment {} template {} could not be rendered", &env, &template)
+                    format!("The request was sent, but your output within environment {:?} template {} could not be rendered", env.name(), &template)
                 })?,
                 false => tmpl
                     .render_some("failure-output", &context)
                     .with_context(|| {
-                        format!("The request was sent, but your failure-output within environment {} template {} could not be rendered", &env, &template)
+                        format!("The request was sent, but your failure-output within environment {:?} template {} could not be rendered", env.name(), &template)
                     })?,
             }
             .as_ref(),
         )
-        .with_context(|| format!("Your request was sent but the output or failure-output within environment {} template {} could not be parsed, run with -v to see if your request was successful", &env, &template))?
+        .with_context(|| format!("Your request was sent but the output or failure-output within environment {:?} template {} could not be parsed, run with -v to see if your request was successful", env.name(), &template))?
         .opt_template(match succeed {
             true => args.get_one("template"),
             false => args.get_one("failure-template"),
@@ -379,7 +387,7 @@ fn run_run_empty(args: &ArgMatches, conf: &Config) -> Result<(), anyhow::Error> 
     let templates = env.templates().with_context(|| {
         format!(
             "could not fetch all templates for {:?} from {:?}",
-            &env,
+            env.name(),
             env.template_dir()
         )
     })?;
@@ -387,11 +395,17 @@ fn run_run_empty(args: &ArgMatches, conf: &Config) -> Result<(), anyhow::Error> 
     for template in templates {
         let tmpl_conf = Config::builder()
             .add_source_environment(&env, &template)
-            .with_context(|| format!("could not load {} for environment {}", &template, &env))?
+            .with_context(|| {
+                format!(
+                    "could not load {} for environment {:?}",
+                    &template,
+                    env.name()
+                )
+            })?
             .build()?;
         m = m.subcommand(tmpl_conf
                 .command_with_name(&template)
-                .with_context(|| format!("environment {} with tempalte {} could not be rendered as command, is something wrong with the template?", &env, &template)
+                .with_context(|| format!("environment {:?} with tempalte {} could not be rendered as command, is something wrong with the template?", env.name(), &template)
                 )?
             );
     }
@@ -517,7 +531,7 @@ async fn run_root(args: &ArgMatches, conf: &Config) -> Result<(), anyhow::Error>
     };
 
     let url = env.create_url(uri);
-    let client = client(args)?;
+    let client = args_client(args)?.build()?;
 
     let request = client
         .request(method, url)

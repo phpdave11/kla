@@ -19,6 +19,7 @@ pub use template::*;
 // extending the functionality of our dependancies
 pub mod clap;
 pub mod config;
+pub mod reqwest_middleware;
 
 // This trait does some string interpilation to turn paths into
 // more useful paths

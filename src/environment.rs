@@ -63,6 +63,13 @@ impl Environment {
             Environment::Empty => Ok(Box::new(std::iter::empty())),
         }
     }
+
+    pub fn name(&self) -> Option<&String> {
+        match self {
+            Environment::Endpoint(endpoint) => Some(&endpoint.name),
+            Environment::Empty => None,
+        }
+    }
 }
 
 #[derive(Deserialize, Debug)]
