@@ -1,8 +1,7 @@
 use std::pin::Pin;
 
 use crate::{impl_opt, impl_when, ContextBuilder, FetchMany, Result};
-use http::Method;
-use reqwest::Response;
+use reqwest::{Request, Response};
 use tera::Tera;
 use tokio::{
     fs::File,
@@ -12,8 +11,6 @@ use tokio::{
 // OutputBuilder collects all the info needed to render the output once
 // kla has made the http request. (or reqwest rather)
 pub struct OutputBuilder {
-    // response is the http response that we got
-    response: Response,
     // tmpl holds all the templates
     tmpl: Tera,
     prelude: Vec<String>,
@@ -26,9 +23,8 @@ pub struct OutputBuilder {
 impl OutputBuilder {
     // new returns a new output builder. If left unchanged a call to render would
     // output nothing
-    pub fn new(resp: Response) -> Self {
+    pub fn new() -> Self {
         OutputBuilder {
-            response: resp,
             output: Box::pin(stdout()),
             prelude_output: None,
             tmpl: Tera::default(),
@@ -72,23 +68,60 @@ impl OutputBuilder {
         self
     }
 
-    pub fn prelude_request<S>(mut self, method: &Method, url: &str, body: Option<S>) -> Self
-    where
-        S: Into<String>,
-    {
-        self.prelude.push(format!("Request: {}: {}", method, &url));
-        if let Some(body) = body {
-            self.prelude.push(body.into());
-        }
-
-        self
+    pub fn request_prelude(self, req: &Request) -> Self {
+        self.request_version_prelude(req)
+            .method_prelude(req)
+            .url_prelude(req)
+            .request_header_prelude(req)
+            .body_prelude(req)
     }
 
     // header_prelude adds a header to the prelude
-    pub fn header_prelude(mut self) -> Self {
+    pub fn request_header_prelude(mut self, req: &Request) -> Self {
+        let mut buf = String::from("Request Headers\n");
+
+        for (key, val) in req.headers() {
+            buf.push_str(format!("\t{}: {:?}\n", key.as_str(), val).as_str());
+        }
+        self.prelude.push(buf);
+        self
+    }
+
+    pub fn url_prelude(mut self, req: &Request) -> Self {
+        self.prelude.push(format!("URL: {}", req.url()));
+        self
+    }
+
+    pub fn method_prelude(mut self, req: &Request) -> Self {
+        self.prelude.push(format!("{}", req.method()));
+        self
+    }
+
+    pub fn body_prelude(mut self, req: &Request) -> Self {
+        if let Some(b) = req.body() {
+            self.prelude.push(format!("{:?}", b));
+        }
+        self
+    }
+
+    pub fn request_version_prelude(mut self, req: &Request) -> Self {
+        self.prelude
+            .push(format!("Request Version: {:?}", req.version()));
+        self
+    }
+
+    /// response_prelude adds prelude stuff from the response payload
+    pub fn response_prelude(self, resp: &Response) -> Self {
+        self.response_header_prelude(resp)
+            .code_prelude(resp)
+            .response_version_prelude(resp)
+    }
+
+    // header_prelude adds a header to the prelude
+    pub fn response_header_prelude(mut self, resp: &Response) -> Self {
         let mut buf = String::from("Response Headers\n");
 
-        for (key, val) in self.response.headers() {
+        for (key, val) in resp.headers() {
             buf.push_str(format!("\t{}: {:?}\n", key.as_str(), val).as_str());
         }
         self.prelude.push(buf);
@@ -96,15 +129,15 @@ impl OutputBuilder {
     }
 
     // header_prelude adds a header to the prelude
-    pub fn code_prelude(mut self) -> Self {
-        self.prelude.push(format!("{}", self.response.status()));
+    pub fn code_prelude(mut self, resp: &Response) -> Self {
+        self.prelude.push(format!("{}", resp.status()));
         self
     }
 
     // header_prelude adds a header to the prelude
-    pub fn version_prelude(mut self) -> Self {
+    pub fn response_version_prelude(mut self, resp: &Response) -> Self {
         self.prelude
-            .push(format!("Version: {:?}", self.response.version()));
+            .push(format!("Response Version: {:?}", resp.version()));
         self
     }
 
@@ -127,9 +160,9 @@ impl OutputBuilder {
     }
 
     // build creates the output
-    pub async fn render(self) -> Result<()> {
+    pub async fn render(self, response: Response) -> Result<()> {
+        let mut response = response;
         let OutputBuilder {
-            mut response,
             tmpl,
             mut prelude_output,
             mut output,

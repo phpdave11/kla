@@ -14,6 +14,7 @@ use std::{
 
 use crate::{Error, RenderGroup, Result};
 
+#[derive(Debug, Clone)]
 /// KeyValue enables you to turn a string like `key=value` into an actual key value
 /// object.
 pub struct KeyValue {

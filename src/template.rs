@@ -125,7 +125,8 @@ impl FetchMany for Tera {
         self.get_template_names()
             .filter(move |tmpl| tmpl.starts_with(prefix))
             .map(move |f| RenderGroup {
-                name: f.into(),
+                name: f.strip_prefix(prefix).unwrap_or(f).into(),
+                tmpl_name: f.into(),
                 tmpl: self,
                 context: context.clone(),
             })
@@ -136,6 +137,7 @@ impl FetchMany for Tera {
 /// a Tera object.
 pub struct RenderGroup<'a> {
     pub name: String,
+    pub tmpl_name: String,
     pub tmpl: &'a Tera,
     pub context: Context,
 }
@@ -143,7 +145,7 @@ pub struct RenderGroup<'a> {
 impl<'a> RenderGroup<'a> {
     /// render will output the value of the evaluated template
     pub fn render(&self) -> std::result::Result<String, tera::Error> {
-        self.tmpl.render(self.name.as_str(), &self.context)
+        self.tmpl.render(self.tmpl_name.as_str(), &self.context)
     }
 
     /// return the name of the template which will be rendered

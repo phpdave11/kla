@@ -283,7 +283,7 @@ async fn run_run<S: Into<String>>(
         .with_context(|| format!("could not set body: {:?}", body.as_ref()))?
         .opt_headers(m.get_many("header"))
         .with_context(|| format!("could not set header: {:?}", m.get_many::<String>("header")))?
-        .opt_headers(Some(tmpl.fetch_with_prefix("header", &context)))
+        .opt_headers(Some(tmpl.fetch_with_prefix("header.", &context)))
         .with_context(|| {
             format!(
                 "envrionment {:?} template {} headers could not be loaded",
@@ -300,7 +300,7 @@ async fn run_run<S: Into<String>>(
                 m.get_many::<String>("query")
             )
         })?
-        .opt_headers(Some(tmpl.fetch_with_prefix("query", &context)))
+        .opt_query(Some(tmpl.fetch_with_prefix("query.", &context)))
         .with_context(|| {
             format!(
                 "envrionment {:?} template {} query params could not be loaded",
@@ -310,7 +310,7 @@ async fn run_run<S: Into<String>>(
         })?
         .opt_form(m.get_many("form"))
         .with_context(|| format!("could not set form: {:?}", m.get_many::<String>("form")))?
-        .opt_headers(Some(tmpl.fetch_with_prefix("form", &context)))
+        .opt_form(Some(tmpl.fetch_with_prefix("form.", &context)))
         .with_context(|| {
             format!(
                 "envrionment {:?} template {} form params could not be loaded",
@@ -326,20 +326,23 @@ async fn run_run<S: Into<String>>(
                 "{:?} is not a valid http-version",
                 m.get_one::<String>("http-version")
             )
-        })?;
+        })?
+        .build()
+        .context("could not build http request")?;
+
+    let output = OutputBuilder::new().when(verbose, |builder| builder.request_prelude(&request));
 
     let response = match args.get_one("dry").map(|b| *b).unwrap_or_default() {
         true => Response::from(http::Response::<Vec<u8>>::default()),
-        false => request
-            .send()
+        false => client
+            .execute(request)
             .await
             .with_context(|| format!("request failed!"))?,
     };
 
     let succeed = response.status().is_success();
 
-    OutputBuilder::new(response)
-        .opt_template(
+    output.opt_template(
             match succeed {
                 true => tmpl.render_some("output", &context).with_context(|| {
                     format!("The request was sent, but your output within environment {:?} template {} could not be rendered", env.name(), &template)
@@ -360,13 +363,8 @@ async fn run_run<S: Into<String>>(
         .with_context(|| format!("Your request was sent but the --output or --failure-output could not be parsed, run with -v to see if your request was successful"))?
         .opt_output(args.get_one("output"))
         .await.with_context(|| format!("could not set --output"))?
-        .when(verbose, |config| {
-            config.prelude_request(&method, &url, body.as_ref())
-        })
-        .when(verbose, OutputBuilder::version_prelude)
-        .when(verbose, OutputBuilder::code_prelude)
-        .when(verbose, OutputBuilder::header_prelude)
-        .render()
+        .when(verbose, |builder| builder.response_prelude(&response))
+        .render(response)
         .await.with_context(|| format!("could not write output to specified location!"))?;
 
     Ok(())
@@ -573,32 +571,33 @@ async fn run_root(args: &ArgMatches, conf: &Config) -> Result<(), anyhow::Error>
                 "{:?} is not a valid http-version",
                 args.get_one::<String>("http-version")
             )
-        })?;
+        })?
+        .build()
+        .context("Could not build http request")?;
+
+    let output = OutputBuilder::new().when(verbose, |builder| builder.request_prelude(&request));
 
     let response = match args.get_one("dry").map(|b| *b).unwrap_or_default() {
         true => Response::from(http::Response::<Vec<u8>>::default()),
-        false => request
-            .send()
+        false => client
+            .execute(request)
             .await
             .with_context(|| format!("request failed!"))?,
     };
 
     let succeed = response.status().is_success();
 
-    OutputBuilder::new(response)
-        .opt_template(if succeed {
+    output.opt_template(if succeed {
             args.get_one("template")
         } else {
             args.get_one("failure-template")
         })
         .with_context(|| format!("Your request was sent but the --output or --failure-output could not be parsed, run with -v to see if your request was successful"))?
-        .when(verbose, OutputBuilder::version_prelude)
-        .when(verbose, OutputBuilder::code_prelude)
-        .when(verbose, OutputBuilder::header_prelude)
+        .when(verbose, |builder| builder.response_prelude(&response))
         .opt_output(args.get_one("output"))
         .await
         .with_context(|| format!("could not set --output"))?
-        .render()
+        .render(response)
         .await.with_context(|| format!("could not write output to specified location!"))?;
 
     Ok(())
