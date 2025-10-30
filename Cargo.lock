@@ -1447,8 +1447,8 @@ name = "kla"
 version = "0.1.1"
 dependencies = [
  "anyhow",
- "async-trait",
  "aws-sigv4",
+ "chrono",
  "clap",
  "colog",
  "config",
@@ -1459,7 +1459,6 @@ dependencies = [
  "log",
  "regex",
  "reqwest",
- "reqwest-middleware",
  "serde",
  "serde_json",
  "skim",
@@ -2075,21 +2074,6 @@ dependencies = [
  "wasm-streams",
  "web-sys",
  "webpki-roots",
-]
-
-[[package]]
-name = "reqwest-middleware"
-version = "0.4.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "57f17d28a6e6acfe1733fe24bcd30774d13bffa4b8a22535b4c8c98423088d4e"
-dependencies = [
- "anyhow",
- "async-trait",
- "http 1.3.1",
- "reqwest",
- "serde",
- "thiserror 1.0.69",
- "tower-service",
 ]
 
 [[package]]

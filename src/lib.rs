@@ -4,6 +4,7 @@ mod error; // package error handling
 mod opt;
 mod output; // managing the output of kla
 mod request; // traits and impl for extending request and requestbuilder
+mod sigv4;
 mod template; // templating responses
 
 use std::env;
@@ -14,12 +15,12 @@ pub use error::*;
 pub use opt::*;
 pub use output::*;
 pub use request::*;
+pub use sigv4::*;
 pub use template::*;
 
 // extending the functionality of our dependancies
 pub mod clap;
 pub mod config;
-pub mod reqwest_middleware;
 
 // This trait does some string interpilation to turn paths into
 // more useful paths
