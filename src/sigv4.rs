@@ -10,7 +10,8 @@ use reqwest::Request;
 use aws_credential_types::Credentials;
 use aws_sigv4::{
     http_request::{
-        sign, SignableBody, SignableRequest, SigningError as Sigv4SigningError, SigningSettings,
+        sign, PayloadChecksumKind, SignableBody, SignableRequest,
+        SigningError as Sigv4SigningError, SigningSettings,
     },
     sign::v4::{self, signing_params::BuildError},
 };
@@ -177,7 +178,9 @@ impl SigV4Builder {
         );
 
         let identity = credentials.into();
-        let signing_settings = SigningSettings::default();
+        let mut signing_settings = SigningSettings::default();
+        signing_settings.payload_checksum_kind = PayloadChecksumKind::XAmzSha256;
+
         let signing_params = v4::SigningParams::builder()
             .identity(&identity)
             .region(&region)
