@@ -1,6 +1,8 @@
-use std::{env, ffi::OsString, fs, sync::Arc};
+use std::{env, ffi::OsString, fs, sync::Arc, time::SystemTime};
 
 use anyhow::Context as _;
+use aws_config::BehaviorVersion;
+use aws_credential_types::provider::ProvideCredentials;
 use clap::{arg, command, ArgAction, ArgMatches, Command};
 use config::{Config, FileFormat};
 use http::Method;
@@ -8,11 +10,11 @@ use kla::{
     clap::DefaultValueIfSome,
     config::{CommandWithName, KlaTemplateConfig, OptionalFile, TemplateArgsContext},
     Endpoint, Environment, Expand, FetchMany, FromEnvironment, KlaClientBuilder, KlaRequestBuilder,
-    OptRender, OutputBuilder, When,
+    OptRender, OutputBuilder, SigV4Builder, When,
 };
 use log::error;
 use regex::Regex;
-use reqwest::{ClientBuilder, Response};
+use reqwest::{ClientBuilder, Request, Response};
 use skim::{prelude::SkimOptionsBuilder, Skim, SkimItem};
 use tera::{Context, Tera};
 use tokio::sync::OnceCell;
@@ -47,7 +49,8 @@ fn command() -> Command {
         .arg(arg!(--"proxy-https" <PROXY_HTTPS> "The proxy to use for https requests."))
         .arg(arg!(--"proxy-auth" <PROXY_AUTH> "The username and password seperated by :."))
         .arg(arg!(--"connect-timeout" <DURATION> "The amount of time to allow for connection"))
-        .arg(arg!(--"aws-sign-v4" "Sign the request with AWS v4 Signature").action(ArgAction::SetTrue))
+        .arg(arg!(--"sigv4" "Sign the request with AWS v4 Signature").action(ArgAction::SetTrue))
+        .arg(arg!(--"sigv4-service" <SERVICE> "The AWS Service to use when signing the request"))
         .arg(arg!(--certificate <CERTIFICATE_FILE> "The path to the certificate to use for requests. Accepts PEM and DER, expects files to end in .der or .pem. defaults to pem").action(ArgAction::Append))
         .arg(arg!("method-or-url": [METHOD_OR_URL] "The URL path (with an assumed GET method) OR the method if another argument is supplied"))
         .arg(arg!(url: [URL] "The URL path when a method is supplied"))
@@ -129,6 +132,29 @@ fn args_client(args: &ArgMatches) -> Result<ClientBuilder, anyhow::Error> {
         .opt_certificate(args.get_many("certificate"))
         .with_context(|| format!("could not add certificate"))?;
     Ok(client_builder)
+}
+
+async fn sign_request(args: &ArgMatches, request: Request) -> Result<Request, anyhow::Error> {
+    let config = aws_config::load_defaults(BehaviorVersion::latest()).await;
+    let credentials = config
+        .credentials_provider()
+        .ok_or(anyhow::Error::msg("AWS credentials not found"))?
+        .provide_credentials()
+        .await
+        .context("could not fetch credentials")?;
+
+    SigV4Builder::new()
+        .date(SystemTime::now())
+        .region(config.region().map(|r| r.to_string()).unwrap_or_default())
+        .service(
+            args.get_one::<String>("sigv4-service")
+                .map(|s| s.as_str())
+                .unwrap_or("execute-api")
+                .to_string(),
+        )
+        .credentials(credentials)
+        .sign(request)
+        .context("Could not sign request")
 }
 
 #[tokio::main]
@@ -329,6 +355,12 @@ async fn run_run<S: Into<String>>(
         })?
         .build()
         .context("could not build http request")?;
+
+    let request = if args.get_one("sigv4").map(|b| *b).unwrap_or_default() {
+        sign_request(args, request).await?
+    } else {
+        request
+    };
 
     let output = OutputBuilder::new().when(verbose, |builder| builder.request_prelude(&request));
 
@@ -574,6 +606,12 @@ async fn run_root(args: &ArgMatches, conf: &Config) -> Result<(), anyhow::Error>
         })?
         .build()
         .context("Could not build http request")?;
+
+    let request = if args.get_one("sigv4").map(|b| *b).unwrap_or_default() {
+        sign_request(args, request).await?
+    } else {
+        request
+    };
 
     let output = OutputBuilder::new().when(verbose, |builder| builder.request_prelude(&request));
 

@@ -1,11 +1,19 @@
-use std::{fmt::Display, time::SystemTime};
+use std::{fmt::Display, ops::Deref, str::FromStr, time::SystemTime};
 
 use chrono::{DateTime, Utc};
-use http::{header::ToStrError, HeaderMap, HeaderValue};
+use http::{
+    header::{self, ToStrError},
+    HeaderName, HeaderValue,
+};
 use reqwest::Request;
-use url::form_urlencoded::Parse;
 
-use crate::{impl_opt, Opt};
+use aws_credential_types::Credentials;
+use aws_sigv4::{
+    http_request::{
+        sign, SignableBody, SignableRequest, SigningError as Sigv4SigningError, SigningSettings,
+    },
+    sign::v4::{self, signing_params::BuildError},
+};
 
 #[derive(thiserror::Error, Debug)]
 /// SigningError will be returned from the builder when any issues arise
@@ -16,8 +24,20 @@ pub enum SigningError {
     // forgot some required field
     BuildError(String),
 
-    #[error("could not build headers: {0}")]
+    #[error("could not build signature: {0}")]
+    Sigv4Error(#[from] BuildError),
+    #[error("could not build signature: {0}")]
+    SigningError(#[from] Sigv4SigningError),
+    #[error("could not turn header into string when signing: {0}")]
     ToStrError(#[from] ToStrError),
+}
+
+/// Implementing from allows you to call `SigningError::From("some string")`
+/// how nice
+impl From<&str> for SigningError {
+    fn from(value: &str) -> Self {
+        SigningError::BuildError(value.into())
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -47,6 +67,14 @@ impl Default for SignedHeaders {
     }
 }
 
+impl Deref for SignedHeaders {
+    type Target = Vec<String>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
 /// This implementation of display will turn the headers into a lowercase
 /// ; delimited string, which is what we need in our Authorization.
 impl Display for SignedHeaders {
@@ -54,20 +82,6 @@ impl Display for SignedHeaders {
         let headers: Vec<String> = self.0.iter().map(|s| s.to_lowercase()).collect();
         write!(f, "{}", headers.join(";"))
     }
-}
-
-/// Implementing from allows you to call `SigningError::From("some string")`
-/// how nice
-impl From<&str> for SigningError {
-    fn from(value: &str) -> Self {
-        SigningError::BuildError(value.into())
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct AWSCredentials {
-    secret: String,
-    key: String,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -82,12 +96,10 @@ pub struct SigV4Builder {
     /// service is the service we intend on making the request against
     service: Option<String>,
     /// credentials hold the AWS credentials for the builder
-    credentials: Option<AWSCredentials>,
+    credentials: Option<Credentials>,
 }
 
 impl SigV4Builder {
-    const ALGORITHM: &'static str = "AWS4-HMAC-SHA256";
-
     /// New Creates a new empty builder
     pub fn new() -> Self {
         Self::default()
@@ -118,8 +130,8 @@ impl SigV4Builder {
     }
 
     /// credentials sets the credentials for the signature
-    pub fn credentials<C: Into<AWSCredentials>>(mut self, credentials: C) -> Self {
-        self.credentials = Some(credentials.into());
+    pub fn credentials(mut self, credentials: Credentials) -> Self {
+        self.credentials = Some(credentials);
         self
     }
 
@@ -145,6 +157,15 @@ impl SigV4Builder {
             "service is required when creating a sigv4 request",
         ))?;
 
+        // make sure the host value is present
+        if !req.headers().contains_key(header::HOST) {
+            let host = req.url().host().map(|h| h.to_string()).unwrap_or_default();
+            req.headers_mut().insert(
+                header::HOST,
+                HeaderValue::from_str(&host).expect("invalid header"),
+            );
+        }
+
         // we want to be using this format `YYYYMMDDTHHMMSSZ`
         // This makes sure the request has the x-amz-date applied to the
         // request. If the value was set we override it to make sure the
@@ -155,107 +176,64 @@ impl SigV4Builder {
                 .expect("how can this be invalid"),
         );
 
-        let _authentication = format!("{} Credential={}/{}/{}/{}/aws4_request, SignedHeaders={}, Signature=fe5f80f77d5fa3beca038a248ff027d0445342fe2855ddc963176630326f1024", Self::ALGORITHM, credentials.key, date.format("%Y%m%d"), region, service, headers);
-        todo!()
-    }
-}
+        let identity = credentials.into();
+        let signing_settings = SigningSettings::default();
+        let signing_params = v4::SigningParams::builder()
+            .identity(&identity)
+            .region(&region)
+            .name(&service)
+            .time(SystemTime::now())
+            .settings(signing_settings)
+            .build()?
+            .into();
 
-#[derive(Debug, Default, Clone)]
-pub struct QueryParameters(Vec<(String, String)>);
-
-impl From<Parse<'_>> for QueryParameters {
-    fn from(value: Parse<'_>) -> Self {
-        let mut params = QueryParameters::default();
-
-        for (key, val) in value {
-            let key: String = key.into_owned();
-            let val: String = val.into_owned();
-
-            params.0.push((key, val));
+        // create the headers list from the paslisted headers
+        let mut signed_headers: Vec<(&str, &str)> = vec![];
+        for header in headers.iter() {
+            signed_headers.push((
+                header.as_str(),
+                req.headers()
+                    .get(header.as_str())
+                    .ok_or(SigningError::BuildError(format!(
+                        "missing header {} which is required for signing",
+                        header
+                    )))?
+                    .to_str()?,
+            ));
         }
 
-        params
-    }
-}
+        let signable_request = SignableRequest::new(
+            req.method().as_str(),
+            req.url().to_string(),
+            signed_headers.into_iter(),
+            SignableBody::Bytes(
+                req.body()
+                    .map(|m| m.as_bytes())
+                    .flatten()
+                    .unwrap_or_default(),
+            ),
+        )?;
 
-#[derive(Debug, Default, Clone)]
-pub struct Headers(Vec<(String, String)>);
+        // Sign the request
+        let (signing_instructions, _signature) =
+            sign(signable_request, &signing_params)?.into_parts();
+        let (headers, query) = signing_instructions.into_parts();
 
-impl TryFrom<&HeaderMap> for Headers {
-    type Error = ToStrError;
-
-    fn try_from(value: &HeaderMap) -> Result<Self, Self::Error> {
-        let mut headers = Headers::default();
-
-        for (name, value) in value {
-            let name: String = name.as_str().into();
-            let value: String = value.to_str()?.into();
-
-            headers.0.push((name, value))
+        // Add headers we need from signing
+        for header in headers {
+            req.headers_mut().insert(
+                HeaderName::from_str(header.name()).expect("aws signature invalid"),
+                HeaderValue::from_str(header.value()).expect("aws signature invalid"),
+            );
         }
 
-        Ok(headers)
-    }
-}
+        // add query parameters needed from signing
+        for param in query {
+            req.url_mut()
+                .query_pairs_mut()
+                .append_pair(param.0, param.1.as_ref());
+        }
 
-#[derive(Debug, Default, Clone)]
-pub struct CanonicalRequestBuilder<'a> {
-    method: Option<String>,
-    path: Option<String>,
-    query: QueryParameters,
-    headers: Headers,
-    payload: Option<&'a [u8]>,
-}
-
-impl<'a> CanonicalRequestBuilder<'a> {
-    pub fn method<S: Into<String>>(mut self, method: S) -> Self {
-        self.method = Some(method.into());
-        self
-    }
-
-    pub fn path<S: Into<String>>(mut self, path: S) -> Self {
-        self.path = Some(path.into());
-        self
-    }
-
-    pub fn payload(mut self, payload: &'a [u8]) -> Self {
-        self.payload = Some(payload);
-        self
-    }
-
-    pub fn query<Q: Into<QueryParameters>>(mut self, query: Q) -> Self {
-        self.query = query.into();
-        self
-    }
-
-    pub fn headers<E: Into<SigningError>, Q: TryInto<Headers, Error = E>>(
-        mut self,
-        headers: Q,
-    ) -> Result<Self, SigningError> {
-        self.headers = headers.try_into().map_err(E::into)?;
-        Ok(self)
-    }
-
-    pub fn build() -> String {
-        todo!()
-    }
-}
-
-impl_opt!(CanonicalRequestBuilder<'_>);
-
-impl<'a> TryFrom<&'a Request> for CanonicalRequestBuilder<'a> {
-    type Error = SigningError;
-
-    fn try_from(value: &'a Request) -> Result<Self, Self::Error> {
-        let builder = Self::default();
-        builder
-            .method(value.method().as_str())
-            .path(value.url().path())
-            .with_some(
-                value.body().map(|b| b.as_bytes()).flatten(),
-                CanonicalRequestBuilder::payload,
-            )
-            .query(value.url().query_pairs())
-            .headers(value.headers())
+        Ok(req)
     }
 }
