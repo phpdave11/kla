@@ -10,7 +10,7 @@ use kla::{
     clap::DefaultValueIfSome,
     config::{CommandWithName, KlaTemplateConfig, MergeChildren, TemplateArgsContext},
     Endpoint, Environment, Expand, FetchMany, FromEnvironment, KlaClientBuilder, KlaRequestBuilder,
-    OptRender, OutputBuilder, SigV4Builder, When,
+    Opt, OptRender, OutputBuilder, SigV4Builder, When,
 };
 use log::error;
 use regex::Regex;
@@ -50,6 +50,7 @@ fn command() -> Command {
         .arg(arg!(--"proxy-auth" <PROXY_AUTH> "The username and password seperated by :."))
         .arg(arg!(--"connect-timeout" <DURATION> "The amount of time to allow for connection"))
         .arg(arg!(--"sigv4" "Sign the request with AWS v4 Signature").action(ArgAction::SetTrue))
+        .arg(arg!(--"sigv4-aws-profile" <AWS_PROFILE> "The AWS profile to use when signing a request"))
         .arg(arg!(--"sigv4-service" <SERVICE> "The AWS Service to use when signing the request"))
         .arg(arg!(--certificate <CERTIFICATE_FILE> "The path to the certificate to use for requests. Accepts PEM and DER, expects files to end in .der or .pem. defaults to pem").action(ArgAction::Append))
         .arg(arg!("method-or-url": [METHOD_OR_URL] "The URL path (with an assumed GET method) OR the method if another argument is supplied"))
@@ -135,7 +136,15 @@ fn args_client(args: &ArgMatches) -> Result<ClientBuilder, anyhow::Error> {
 }
 
 async fn sign_request(args: &ArgMatches, request: Request) -> Result<Request, anyhow::Error> {
-    let config = aws_config::load_defaults(BehaviorVersion::latest()).await;
+    let config = aws_config::ConfigLoader::default()
+        .behavior_version(BehaviorVersion::latest())
+        .with_some(
+            args.get_one::<String>("sigv4-aws-profile"),
+            aws_config::ConfigLoader::profile_name,
+        )
+        .load()
+        .await;
+
     let credentials = config
         .credentials_provider()
         .ok_or(anyhow::Error::msg("AWS credentials not found"))?

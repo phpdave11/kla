@@ -45,7 +45,13 @@ impl MergeChildren for Config {
     fn merge_children(self, path: &str) -> Result<Self, ConfigError> {
         let mut builder = Config::builder();
 
-        for c in self.get_array(path)? {
+        let path = match self.get_array(path) {
+            Ok(path) => path,
+            Err(ConfigError::NotFound(_)) => return Ok(self),
+            Err(err) => return Err(err),
+        };
+
+        for c in path {
             let c = c.into_table()?;
             if let (Some(_), Some(_)) = (c.get("path"), c.get("dir")) {
                 return Err(ConfigError::Message(format!(

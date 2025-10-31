@@ -119,3 +119,5 @@ macro_rules! impl_ok {
         }
     };
 }
+
+impl_opt!(aws_config::ConfigLoader);
