@@ -1,11 +1,8 @@
+use std::fs::{self, DirEntry};
+
 use clap::{command, Arg, ArgMatches, Command};
-use config::{
-    builder::DefaultState, Config, ConfigBuilder, ConfigError, File, FileFormat, FileSourceFile,
-    FileStoredFormat, Map, Source, Value,
-};
+use config::{builder::DefaultState, Config, ConfigBuilder, ConfigError, File, FileFormat};
 use serde::Deserialize;
-use std::fmt::Debug;
-use std::path::Path;
 use tera::{Context, Tera};
 
 use crate::{
@@ -13,53 +10,73 @@ use crate::{
     opt::{Ok, Opt},
 };
 
-#[derive(Debug)]
-pub struct OptionalFile<F: FileStoredFormat + 'static>(Option<File<FileSourceFile, F>>);
-
-impl<F> OptionalFile<F>
-where
-    F: FileStoredFormat + 'static,
-{
-    pub fn new(path: &str, format: F) -> OptionalFile<F> {
-        if !Path::new(path).exists() {
-            return OptionalFile(None);
-        }
-
-        OptionalFile(Some(File::new(path, format)))
-    }
-
-    pub fn with_name(path: &str) -> OptionalFile<FileFormat> {
-        if !Path::new(path).exists() {
-            return OptionalFile(None);
-        }
-
-        OptionalFile(Some(File::with_name(path)))
-    }
+/// MergeChildren allos us to add the merge_children function which enables us to
+/// create a new config object from children defined within the config itself
+pub trait MergeChildren: Sized {
+    fn merge_children(self, path: &str) -> Result<Self, ConfigError>;
 }
 
-impl<F> Source for OptionalFile<F>
-where
-    F: FileStoredFormat + Debug + Clone + Send + Sync + 'static,
-{
-    fn clone_into_box(&self) -> Box<dyn Source + Send + Sync> {
-        match self.0.as_ref() {
-            Some(file) => file.clone_into_box(),
-            None => Box::new(OptionalFile::<F>(None)),
-        }
-    }
+impl MergeChildren for Config {
+    /// merge_children searches through the config object for a `config` attribute
+    /// This attribute is expected to be an array of tables with the value `path`
+    /// or `dir`. In the event both are given an error is returned. In the even neither
+    /// is given an error is returned.
+    ///
+    /// example Toml
+    ///
+    /// ```toml
+    /// # valid
+    /// [[config]]
+    ///   path = "/etc/kla/second_file.toml"
+    ///
+    /// # valid
+    /// [[config]]
+    ///   dir = "/etc/kla/config.d"
+    ///
+    /// # invalid
+    /// [[config]]
+    ///   dir = "/etc/kla/config.d"
+    ///   path = "/etc/kla/second_file.toml"
+    ///
+    /// # invalid
+    /// [[config]]
+    ///   my_random_attribute = "something"
+    /// ```
+    fn merge_children(self, path: &str) -> Result<Self, ConfigError> {
+        let mut builder = Config::builder();
 
-    fn collect(&self) -> Result<Map<String, Value>, ConfigError> {
-        match self.0.as_ref() {
-            Some(file) => file.collect(),
-            None => Ok(Map::new()),
-        }
-    }
+        for c in self.get_array(path)? {
+            let c = c.into_table()?;
+            if let (Some(_), Some(_)) = (c.get("path"), c.get("dir")) {
+                return Err(ConfigError::Message(format!(
+                    "config must have only `path` or `dir` property set! You set both"
+                )));
+            } else if let Some(path) = c.get("path") {
+                // for some reason it takes ownership :(
+                let path = path.clone().into_string()?;
+                builder = builder.add_source(File::new(&path, FileFormat::Toml));
+            } else if let Some(dir) = c.get("dir") {
+                let dir = dir.clone().into_string()?;
+                let dir = fs::read_dir(dir)
+                    .map_err(|e| ConfigError::Foreign(Box::new(e)))?
+                    .collect::<std::result::Result<Vec<DirEntry>, std::io::Error>>()
+                    .map_err(|e| ConfigError::Foreign(Box::new(e)))?
+                    .into_iter()
+                    .filter(|f| f.file_type().map(|v| v.is_file()).unwrap_or(false));
 
-    fn collect_to(&self, cache: &mut Value) -> Result<(), ConfigError> {
-        match self.0.as_ref() {
-            Some(file) => file.collect_to(cache),
-            None => Ok(()),
+                for entry in dir {
+                    let path = entry.path();
+                    let path = path.as_os_str().to_string_lossy();
+                    builder = builder.add_source(File::new(path.as_ref(), FileFormat::Toml));
+                }
+            } else {
+                return Err(ConfigError::Message(format!(
+                    "config must have a `path` or `dir` property set!"
+                )));
+            }
         }
+
+        builder.add_source(self).build()
     }
 }
 

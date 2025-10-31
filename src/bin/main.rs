@@ -1,14 +1,14 @@
-use std::{env, ffi::OsString, fs, sync::Arc, time::SystemTime};
+use std::{ffi::OsString, fs, path::Path, sync::Arc, time::SystemTime};
 
 use anyhow::Context as _;
 use aws_config::BehaviorVersion;
 use aws_credential_types::provider::ProvideCredentials;
 use clap::{arg, command, ArgAction, ArgMatches, Command};
-use config::{Config, FileFormat};
+use config::{Config, File, FileFormat};
 use http::Method;
 use kla::{
     clap::DefaultValueIfSome,
-    config::{CommandWithName, KlaTemplateConfig, OptionalFile, TemplateArgsContext},
+    config::{CommandWithName, KlaTemplateConfig, MergeChildren, TemplateArgsContext},
     Endpoint, Environment, Expand, FetchMany, FromEnvironment, KlaClientBuilder, KlaRequestBuilder,
     OptRender, OutputBuilder, SigV4Builder, When,
 };
@@ -175,20 +175,23 @@ async fn main() {
 async fn run() -> Result<(), anyhow::Error> {
     colog::init();
 
+    let config_file = [
+        "config.toml".into(),
+        "~/.kla.toml".shell_expansion(),
+        "~/.config/kla/config.toml".shell_expansion(),
+        "/etc/kla/config.toml".into(),
+    ]
+    .into_iter()
+    .filter(|f| Path::new(f).exists())
+    .next()
+    .ok_or(anyhow::Error::msg("No valid config file found"))?;
+
     let conf = Config::builder()
-        .add_source(OptionalFile::new("/etc/kla/config.toml", FileFormat::Toml))
-        .add_source(OptionalFile::new(
-            &"~/.config/kla/config.toml".shell_expansion(),
-            FileFormat::Toml,
-        ))
-        .add_source(OptionalFile::new(
-            &"~/.kla.toml".shell_expansion(),
-            FileFormat::Toml,
-        ))
-        .add_source(OptionalFile::new("config.toml", FileFormat::Toml))
+        .add_source(File::new(&config_file, FileFormat::Toml))
         .set_default("default.environment", "/etc/kla/.default-environment")?
         .build()
-        .with_context(|| format!("could not load configuration"))?;
+        .with_context(|| format!("could not load configuration"))?
+        .merge_children("config")?;
 
     // if the config file has a default environment we want to store it in a static
     // variable so it can be used everywhere
