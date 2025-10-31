@@ -24,6 +24,24 @@ static DEFAULT_ENV: OnceCell<OsString> = OnceCell::const_new();
 fn command() -> Command {
     command!()
         .arg_required_else_help(true)
+        .long_about("
+▖▖▖ ▄▖
+▙▘▌ ▌▌
+▌▌▙▖▛▌
+
+Kla is a CLI tool that whos goal is to make it easy to interact with HTTP APIs. Instead of scowering the internet for the appropriate arguments to make a curl call, you can instead just pass a few arguments to the terminal and get things done. A Few examples!
+
+Examples: 
+
+Make a post to your ntfy server
+> kla post /my_scope 'your cron job finished successfully'
+
+Delete an elasticsearch index
+> kla delete /logs-20251011
+
+Run a template which lists authors
+> kla --env poetry run authors
+            ")
         .subcommand_required(false)
         .arg(arg!(--agent <AGENT> "The header agent string").default_value("kla"))
         .arg(arg!(-e --env <ENVIRONMENT> "The environment we will run the request against").required(false).default_value_if_some(DEFAULT_ENV.get().map(|v| v.as_os_str())))
