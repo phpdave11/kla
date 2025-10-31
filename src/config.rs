@@ -1,5 +1,6 @@
 use std::fs::{self, DirEntry};
 
+use anyhow::Context as _;
 use clap::{command, Arg, ArgMatches, Command};
 use config::{builder::DefaultState, Config, ConfigBuilder, ConfigError, File, FileFormat};
 use serde::Deserialize;
@@ -59,14 +60,21 @@ impl MergeChildren for Config {
                 )));
             } else if let Some(path) = c.get("path") {
                 // for some reason it takes ownership :(
-                let path = path.clone().into_string()?;
+                let path = path
+                    .clone()
+                    .into_string()
+                    .context(format!("could not read file {}", path))
+                    .map_err(|e| ConfigError::Foreign(e.into()))?;
+
                 builder = builder.add_source(File::new(&path, FileFormat::Toml));
             } else if let Some(dir) = c.get("dir") {
                 let dir = dir.clone().into_string()?;
-                let dir = fs::read_dir(dir)
-                    .map_err(|e| ConfigError::Foreign(Box::new(e)))?
+                let dir = fs::read_dir(&dir)
+                    .context(format!("could not read directory {}", dir))
+                    .map_err(|e| ConfigError::Foreign(e.into()))?
                     .collect::<std::result::Result<Vec<DirEntry>, std::io::Error>>()
-                    .map_err(|e| ConfigError::Foreign(Box::new(e)))?
+                    .context(format!("could not read directory {}", dir))
+                    .map_err(|e| ConfigError::Foreign(e.into()))?
                     .into_iter()
                     .filter(|f| f.file_type().map(|v| v.is_file()).unwrap_or(false));
 

@@ -200,7 +200,8 @@ async fn run() -> Result<(), anyhow::Error> {
         .set_default("default.environment", "/etc/kla/.default-environment")?
         .build()
         .with_context(|| format!("could not load configuration"))?
-        .merge_children("config")?;
+        .merge_children("config")
+        .context("could not load [[config]] files")?;
 
     // if the config file has a default environment we want to store it in a static
     // variable so it can be used everywhere
