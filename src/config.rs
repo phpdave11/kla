@@ -9,6 +9,7 @@ use tera::{Context, Tera};
 use crate::{
     impl_opt,
     opt::{Ok, Opt},
+    Expand,
 };
 
 /// MergeChildren allos us to add the merge_children function which enables us to
@@ -64,12 +65,13 @@ impl MergeChildren for Config {
                     .clone()
                     .into_string()
                     .context(format!("could not read file {}", path))
-                    .map_err(|e| ConfigError::Foreign(e.into()))?;
+                    .map_err(|e| ConfigError::Foreign(e.into()))?
+                    .shell_expansion();
 
                 builder = builder.add_source(File::new(&path, FileFormat::Toml));
             } else if let Some(dir) = c.get("dir") {
                 let dir = dir.clone().into_string()?;
-                let dir = fs::read_dir(&dir)
+                let dir = fs::read_dir(dir.as_str().shell_expansion())
                     .context(format!("could not read directory {}", dir))
                     .map_err(|e| ConfigError::Foreign(e.into()))?
                     .collect::<std::result::Result<Vec<DirEntry>, std::io::Error>>()
