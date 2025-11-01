@@ -1,8 +1,6 @@
-use std::{ffi::OsString, fs, path::Path, sync::Arc, time::SystemTime};
+use std::{ffi::OsString, fs, path::Path, sync::Arc};
 
 use anyhow::Context as _;
-use aws_config::BehaviorVersion;
-use aws_credential_types::provider::ProvideCredentials;
 use clap::{arg, command, ArgAction, ArgMatches, Command};
 use config::{Config, File, FileFormat};
 use http::Method;
@@ -10,11 +8,11 @@ use kla::{
     clap::DefaultValueIfSome,
     config::{CommandWithName, KlaTemplateConfig, MergeChildren, TemplateArgsContext},
     Endpoint, Environment, Expand, FetchMany, FromEnvironment, KlaClientBuilder, KlaRequestBuilder,
-    Opt, OptRender, OutputBuilder, SigV4Builder, When,
+    OptRender, OutputBuilder, Sigv4Request, When, WithEnvironment,
 };
 use log::error;
 use regex::Regex;
-use reqwest::{ClientBuilder, Request, Response};
+use reqwest::{ClientBuilder, Response};
 use skim::{prelude::SkimOptionsBuilder, Skim, SkimItem};
 use tera::{Context, Tera};
 use tokio::sync::OnceCell;
@@ -151,37 +149,6 @@ fn args_client(args: &ArgMatches) -> Result<ClientBuilder, anyhow::Error> {
         .opt_certificate(args.get_many("certificate"))
         .with_context(|| format!("could not add certificate"))?;
     Ok(client_builder)
-}
-
-async fn sign_request(args: &ArgMatches, request: Request) -> Result<Request, anyhow::Error> {
-    let config = aws_config::ConfigLoader::default()
-        .behavior_version(BehaviorVersion::latest())
-        .with_some(
-            args.get_one::<String>("sigv4-aws-profile"),
-            aws_config::ConfigLoader::profile_name,
-        )
-        .load()
-        .await;
-
-    let credentials = config
-        .credentials_provider()
-        .ok_or(anyhow::Error::msg("AWS credentials not found"))?
-        .provide_credentials()
-        .await
-        .context("could not fetch credentials")?;
-
-    SigV4Builder::new()
-        .date(SystemTime::now())
-        .region(config.region().map(|r| r.to_string()).unwrap_or_default())
-        .service(
-            args.get_one::<String>("sigv4-service")
-                .map(|s| s.as_str())
-                .unwrap_or("execute-api")
-                .to_string(),
-        )
-        .credentials(credentials)
-        .sign(request)
-        .context("Could not sign request")
 }
 
 #[tokio::main]
@@ -385,10 +352,17 @@ async fn run_run<S: Into<String>>(
             )
         })?
         .build()
-        .context("could not build http request")?;
+        .context("could not build http request")?
+        .with_environment(&env)
+        .await?;
 
-    let request = if args.get_one("sigv4").map(|b| *b).unwrap_or_default() {
-        sign_request(args, request).await?
+    let request = if args.get_one("sigv4").map(|v| *v).unwrap_or(false) {
+        request
+            .sign_request(
+                args.get_one::<String>("sigv4-aws-profile"),
+                args.get_one::<String>("sigv4-aws-service"),
+            )
+            .await?
     } else {
         request
     };
@@ -592,10 +566,12 @@ async fn run_root(args: &ArgMatches, conf: &Config) -> Result<(), anyhow::Error>
     };
 
     let url = env.create_url(uri);
-    let client = args_client(args)?.build()?;
+    let client = args_client(args)?.with_environment(&env).await?.build()?;
 
     let request = client
         .request(method, url)
+        .with_environment(&env)
+        .await?
         .opt_body(args.get_one("body"))
         .with_context(|| format!("could not set body: {:?}", args.get_one::<String>("body")))?
         .opt_headers(args.get_many("header"))
@@ -636,10 +612,17 @@ async fn run_root(args: &ArgMatches, conf: &Config) -> Result<(), anyhow::Error>
             )
         })?
         .build()
-        .context("Could not build http request")?;
+        .context("Could not build http request")?
+        .with_environment(&env)
+        .await?;
 
-    let request = if args.get_one("sigv4").map(|b| *b).unwrap_or_default() {
-        sign_request(args, request).await?
+    let request = if args.get_one("sigv4").map(|v| *v).unwrap_or(false) {
+        request
+            .sign_request(
+                args.get_one::<String>("sigv4-aws-profile"),
+                args.get_one::<String>("sigv4-aws-service"),
+            )
+            .await?
     } else {
         request
     };

@@ -25,6 +25,8 @@ pub enum Error {
     SkimError(#[from] skim::options::SkimOptionsBuilderError),
     #[error("{0}")]
     KlaError(String),
+    #[error("{0}")]
+    Error(#[from] anyhow::Error),
 }
 
 impl From<&str> for Error {

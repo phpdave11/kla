@@ -8,10 +8,11 @@ use std::{
 use std::fs::{self, DirEntry};
 
 use config::{builder::DefaultState, Config, ConfigBuilder, File};
+use reqwest::{ClientBuilder, Request, RequestBuilder};
 use serde::Deserialize;
 use skim::SkimItem;
 
-use crate::{Error, Expand, Result};
+use crate::{Error, Expand, Result, Sigv4Request};
 
 #[derive(Debug)]
 pub enum Environment {
@@ -88,6 +89,13 @@ pub struct Endpoint {
 
     #[serde(rename = "template_dir")]
     template_dir: Option<String>,
+
+    #[serde(rename = "sigv4")]
+    sigv4: Option<bool>,
+    #[serde(rename = "sigv4_aws_profile")]
+    sigv4_aws_profile: Option<String>,
+    #[serde(rename = "sigv4_aws_service")]
+    sigv4_aws_service: Option<String>,
 }
 
 impl Endpoint {
@@ -204,5 +212,45 @@ impl FromEnvironment for ConfigBuilder<DefaultState> {
         Ok(self.add_source(File::with_name(
             template.as_path().to_str().expect("bad path"),
         )))
+    }
+}
+
+pub trait WithEnvironment: Sized {
+    fn with_environment(
+        self,
+        env: &Environment,
+    ) -> impl std::future::Future<Output = Result<Self>> + Send;
+}
+
+impl WithEnvironment for ClientBuilder {
+    async fn with_environment(self, _env: &Environment) -> Result<Self> {
+        Ok(self)
+    }
+}
+
+impl WithEnvironment for RequestBuilder {
+    async fn with_environment(self, _env: &Environment) -> Result<Self> {
+        Ok(self)
+    }
+}
+
+impl WithEnvironment for Request {
+    async fn with_environment(self, env: &Environment) -> Result<Self> {
+        let endpoint = match env {
+            Environment::Endpoint(endpoint) => endpoint,
+            Environment::Empty => return Ok(self),
+        };
+
+        let request = if endpoint.sigv4.unwrap_or(false) {
+            self.sign_request(
+                endpoint.sigv4_aws_profile.as_ref(),
+                endpoint.sigv4_aws_service.as_ref(),
+            )
+            .await?
+        } else {
+            self
+        };
+
+        Ok(request)
     }
 }
