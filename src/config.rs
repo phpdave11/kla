@@ -1,9 +1,9 @@
 use std::fs::{self, DirEntry};
 
 use anyhow::Context as _;
-use clap::{command, Arg, ArgMatches, Command};
+use clap::{command, Arg, ArgAction, ArgMatches, Command};
 use config::{builder::DefaultState, Config, ConfigBuilder, ConfigError, File, FileFormat};
-use serde::Deserialize;
+use serde::{de::Visitor, Deserialize, Deserializer};
 use tera::{Context, Tera};
 
 use crate::{
@@ -383,6 +383,99 @@ struct ConfigArg {
     hide_short_help: Option<bool>,
     #[serde(rename = "hide_long_help")]
     hide_long_help: Option<bool>,
+    #[serde(
+        rename = "action",
+        deserialize_with = "deserialize_option_action",
+        default = "arg_action_default"
+    )]
+    action: Option<ArgAction>,
+}
+
+fn arg_action_default() -> Option<ArgAction> {
+    None
+}
+
+// enables us to parse an Option<ArgAction> when setting `deserialize_with`
+fn deserialize_option_action<'de, D>(de: D) -> Result<Option<ArgAction>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    #[derive(Default)]
+    struct ActionVisitor;
+
+    impl<'de> Visitor<'de> for ActionVisitor {
+        type Value = Option<ArgAction>;
+
+        fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+            write!(formatter, "expected string with value `set`, `append`, `set_true`, `set_false`, `count`, `help`, `help_short`, `help_long`, `version`")
+        }
+
+        fn visit_none<E>(self) -> Result<Self::Value, E>
+        where
+            E: serde::de::Error,
+        {
+            Ok(None)
+        }
+
+        fn visit_some<D>(self, de: D) -> Result<Self::Value, D::Error>
+        where
+            D: Deserializer<'de>,
+        {
+            Ok(Some(deserialize_action(de)?))
+        }
+
+        fn visit_unit<E>(self) -> Result<Self::Value, E>
+        where
+            E: serde::de::Error,
+        {
+            Ok(None)
+        }
+    }
+
+    de.deserialize_any(ActionVisitor::default())
+}
+
+fn deserialize_action<'de, D>(de: D) -> Result<ArgAction, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    struct ActionVisitor;
+
+    impl<'de> Visitor<'de> for ActionVisitor {
+        type Value = ArgAction;
+
+        fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+            write!(formatter, "expected string with value `set`, `append`, `set_true`, `set_false`, `count`, `help`, `help_short`, `help_long`, `version`")
+        }
+
+        fn visit_none<E>(self) -> Result<Self::Value, E>
+        where
+            E: serde::de::Error,
+        {
+            Ok(ArgAction::Set)
+        }
+
+        fn visit_str<E>(self, v: &str) -> Result<Self::Value, E>
+        where
+            E: serde::de::Error,
+        {
+            match v {
+                "set" => Ok(ArgAction::Set),
+                "append" => Ok(ArgAction::Append),
+                "set_true" => Ok(ArgAction::SetTrue),
+                "set_false" => Ok(ArgAction::SetFalse),
+                "count" => Ok(ArgAction::Count),
+                "help" => Ok(ArgAction::Help),
+                "help_short" => Ok(ArgAction::HelpShort),
+                "help_long" => Ok(ArgAction::HelpLong),
+                "version" => Ok(ArgAction::Version),
+                _ => Err(serde::de::Error::custom("unknown action type provided")),
+            }
+        }
+    }
+
+    let av = ActionVisitor {};
+    de.deserialize_str(av)
 }
 
 impl ConfigArg {
@@ -435,6 +528,7 @@ impl TryFrom<ConfigArg> for Arg {
             .with_some(value.hide_env_values, Arg::hide_env_values)
             .with_some(value.hide_short_help, Arg::hide_short_help)
             .with_some(value.hide_long_help, Arg::hide_long_help)
+            .action(value.action)
             .with_some(value.raw, Arg::raw);
         // at group
 
