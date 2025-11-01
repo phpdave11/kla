@@ -50,7 +50,9 @@ impl ContextBuilder {
             },
             _ => (),
         }
+
         self.data.insert("resp_body", &content);
+
         Ok(self)
     }
 

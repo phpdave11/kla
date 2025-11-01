@@ -3,6 +3,7 @@ use std::fs::{self, DirEntry};
 use anyhow::Context as _;
 use clap::{command, Arg, ArgAction, ArgMatches, Command};
 use config::{builder::DefaultState, Config, ConfigBuilder, ConfigError, File, FileFormat};
+use inquire::Password;
 use serde::{de::Visitor, Deserialize, Deserializer};
 use tera::{Context, Number, Tera};
 
@@ -131,6 +132,11 @@ struct ConfigCommand {
     query: Vec<ConfigKV>,
     #[serde(rename = "form", default)]
     form: Vec<ConfigKV>,
+    #[serde(rename = "template", skip)]
+    // these are utilized by output
+    _template: Option<String>,
+    #[serde(rename = "failure_template", skip)]
+    _failure_template: Option<String>,
 }
 
 impl ConfigCommand {
@@ -211,8 +217,8 @@ pub trait TemplateArgsContext: Sized {
     fn template_args(self, tmpl_conf: &Config, args: &ArgMatches) -> Result<Self, Self::Error>;
 }
 
-macro_rules! set_one {
-    ($args:expr, $ty:ty, $name:expr, $context:expr) => {
+macro_rules! get_one {
+    ($args:expr, $ty:ty, $name:expr) => {
         $args
             .try_get_one::<$ty>($name)
             .map_err(|_| {
@@ -222,13 +228,11 @@ macro_rules! set_one {
                     stringify!($ty),
                 ))
             })?
-            .iter()
-            .for_each(|v| $context.insert($name, v))
     };
 }
 
-macro_rules! set_many {
-    ($args:expr, $ty:ty, $name:expr, $context:expr) => {
+macro_rules! get_many {
+    ($args:expr, $ty:ty, $name:expr) => {
         $args
             .try_get_many::<$ty>($name)
             .map_err(|_| {
@@ -239,8 +243,6 @@ macro_rules! set_many {
                 ))
             })?
             .map(|v| v.collect::<Vec<_>>())
-            .iter()
-            .for_each(|v| $context.insert($name, &v))
     };
 }
 
@@ -254,19 +256,41 @@ impl TemplateArgsContext for Context {
 
             match arg_conf.arg_type {
                 ConfigArgType::String if arg_conf.many_valued => {
-                    set_many!(args, String, &arg_conf.name, self)
+                    get_many!(args, String, &arg_conf.name)
+                        .iter()
+                        .for_each(|v| self.insert(&arg_conf.name, &v));
                 }
-                ConfigArgType::String => {
-                    set_one!(args, String, &arg_conf.name, self)
+                ConfigArgType::String if arg_conf.password => {
+                    get_one!(args, String, &arg_conf.name)
+                        .map(|v| v.clone())
+                        .or_else(|| {
+                            Password::new("Password:")
+                                .without_confirmation()
+                                .prompt()
+                                .ok()
+                        })
+                        .iter()
+                        .for_each(|v| self.insert(&arg_conf.name, v))
                 }
+                ConfigArgType::String => get_one!(args, String, &arg_conf.name)
+                    .iter()
+                    .for_each(|v| self.insert(&arg_conf.name, v)),
                 ConfigArgType::Number if arg_conf.many_valued => {
-                    set_many!(args, Number, &arg_conf.name, self)
+                    get_many!(args, Number, &arg_conf.name)
+                        .iter()
+                        .for_each(|v| self.insert(&arg_conf.name, &v));
                 }
-                ConfigArgType::Number => set_one!(args, Number, &arg_conf.name, self),
+                ConfigArgType::Number => get_one!(args, Number, &arg_conf.name)
+                    .iter()
+                    .for_each(|v| self.insert(&arg_conf.name, v)),
                 ConfigArgType::Bool if arg_conf.many_valued => {
-                    set_many!(args, bool, &arg_conf.name, self)
+                    get_many!(args, bool, &arg_conf.name)
+                        .iter()
+                        .for_each(|v| self.insert(&arg_conf.name, &v));
                 }
-                ConfigArgType::Bool => set_one!(args, bool, &arg_conf.name, self),
+                ConfigArgType::Bool => get_one!(args, bool, &arg_conf.name)
+                    .iter()
+                    .for_each(|v| self.insert(&arg_conf.name, v)),
             }
         }
 
@@ -423,6 +447,8 @@ struct ConfigArg {
         default = "arg_action_default"
     )]
     action: Option<ArgAction>,
+    #[serde(rename = "password", default)]
+    password: bool,
 }
 
 fn arg_action_default() -> Option<ArgAction> {

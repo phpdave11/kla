@@ -381,23 +381,16 @@ async fn run_run<S: Into<String>>(
 
     output.opt_template(
             match succeed {
-                true => tmpl.render_some("output", &context).with_context(|| {
-                    format!("The request was sent, but your output within environment {:?} template {} could not be rendered", env.name(), &template)
-                })?,
-                false => tmpl
-                    .render_some("failure-output", &context)
-                    .with_context(|| {
-                        format!("The request was sent, but your failure-output within environment {:?} template {} could not be rendered", env.name(), &template)
-                    })?,
-            }
-            .as_ref(),
+                true => tmpl_config.get_string("template").ok(),
+                false => tmpl_config.get_string("failure_template").ok(),
+            }.as_ref()
         )
-        .with_context(|| format!("Your request was sent but the output or failure-output within environment {:?} template {} could not be parsed, run with -v to see if your request was successful", env.name(), &template))?
+        .with_context(|| format!("Your request was sent but the output or failure-template within environment {:?} template {} could not be parsed, run with -v to see if your request was successful", env.name(), &template))?
         .opt_template(match succeed {
             true => args.get_one("template"),
             false => args.get_one("failure-template"),
         })
-        .with_context(|| format!("Your request was sent but the --output or --failure-output could not be parsed, run with -v to see if your request was successful"))?
+        .with_context(|| format!("Your request was sent but the --template or --failure-template could not be parsed, run with -v to see if your request was successful"))?
         .opt_output(args.get_one("output"))
         .await.with_context(|| format!("could not set --output"))?
         .when(verbose, |builder| builder.response_prelude(&response))
@@ -644,7 +637,7 @@ async fn run_root(args: &ArgMatches, conf: &Config) -> Result<(), anyhow::Error>
         } else {
             args.get_one("failure-template")
         })
-        .with_context(|| format!("Your request was sent but the --output or --failure-output could not be parsed, run with -v to see if your request was successful"))?
+        .with_context(|| format!("Your request was sent but the --template or --failure-template could not be parsed, run with -v to see if your request was successful"))?
         .when(verbose, |builder| builder.response_prelude(&response))
         .opt_output(args.get_one("output"))
         .await
