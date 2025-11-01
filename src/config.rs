@@ -4,7 +4,7 @@ use anyhow::Context as _;
 use clap::{command, Arg, ArgAction, ArgMatches, Command};
 use config::{builder::DefaultState, Config, ConfigBuilder, ConfigError, File, FileFormat};
 use serde::{de::Visitor, Deserialize, Deserializer};
-use tera::{Context, Tera};
+use tera::{Context, Number, Tera};
 
 use crate::{
     impl_opt,
@@ -211,6 +211,39 @@ pub trait TemplateArgsContext: Sized {
     fn template_args(self, tmpl_conf: &Config, args: &ArgMatches) -> Result<Self, Self::Error>;
 }
 
+macro_rules! set_one {
+    ($args:expr, $ty:ty, $name:expr, $context:expr) => {
+        $args
+            .try_get_one::<$ty>($name)
+            .map_err(|_| {
+                crate::Error::from(format!(
+                    "argument `{}` had type of `{}` which is apparently wrong, set `type` to the correct value in your template",
+                    $name,
+                    stringify!($ty),
+                ))
+            })?
+            .iter()
+            .for_each(|v| $context.insert($name, v))
+    };
+}
+
+macro_rules! set_many {
+    ($args:expr, $ty:ty, $name:expr, $context:expr) => {
+        $args
+            .try_get_many::<$ty>($name)
+            .map_err(|_| {
+                crate::Error::from(format!(
+                    "{} type of {} wrong, set `type` to the correct value",
+                    $name,
+                    stringify!($ty),
+                ))
+            })?
+            .map(|v| v.collect::<Vec<_>>())
+            .iter()
+            .for_each(|v| $context.insert($name, &v))
+    };
+}
+
 impl TemplateArgsContext for Context {
     type Error = crate::Error;
     /// template_arguments takes the values provided by command line arguments and
@@ -219,23 +252,21 @@ impl TemplateArgsContext for Context {
         for arg in tmpl_conf.get_array("arg").unwrap_or_default() {
             let arg_conf: ConfigArg = arg.try_deserialize()?;
 
-            match arg_conf.arg_type() {
-                ConfigArgType::List => {
-                    let val = match args.get_many::<String>(&arg_conf.name) {
-                        Some(val) => val.collect::<Vec<_>>(),
-                        None => continue,
-                    };
-
-                    self.insert(&arg_conf.name, &val)
+            match arg_conf.arg_type {
+                ConfigArgType::String if arg_conf.many_valued => {
+                    set_many!(args, String, &arg_conf.name, self)
                 }
-                ConfigArgType::Single => {
-                    let val = match args.get_one::<String>(&arg_conf.name) {
-                        Some(val) => val,
-                        None => continue,
-                    };
-
-                    self.insert(&arg_conf.name, val)
+                ConfigArgType::String => {
+                    set_one!(args, String, &arg_conf.name, self)
                 }
+                ConfigArgType::Number if arg_conf.many_valued => {
+                    set_many!(args, Number, &arg_conf.name, self)
+                }
+                ConfigArgType::Number => set_one!(args, Number, &arg_conf.name, self),
+                ConfigArgType::Bool if arg_conf.many_valued => {
+                    set_many!(args, bool, &arg_conf.name, self)
+                }
+                ConfigArgType::Bool => set_one!(args, bool, &arg_conf.name, self),
             }
         }
 
@@ -307,13 +338,14 @@ impl KlaTemplateConfig for Tera {
 
 #[derive(Deserialize, Copy, Clone)]
 enum ConfigArgType {
-    List,
-    Single,
+    String,
+    Number,
+    Bool,
 }
 
 impl Default for ConfigArgType {
     fn default() -> Self {
-        Self::Single
+        Self::String
     }
 }
 
@@ -323,6 +355,8 @@ struct ConfigArg {
     name: String,
     #[serde(rename = "type", default)]
     arg_type: ConfigArgType,
+    #[serde(rename = "many_valued", default)]
+    many_valued: bool,
     #[serde(rename = "short")]
     short: Option<char>,
     #[serde(rename = "short_aliases", default)]
@@ -385,7 +419,7 @@ struct ConfigArg {
     hide_long_help: Option<bool>,
     #[serde(
         rename = "action",
-        deserialize_with = "deserialize_option_action",
+        deserialize_with = "deserialize_action",
         default = "arg_action_default"
     )]
     action: Option<ArgAction>,
@@ -395,12 +429,10 @@ fn arg_action_default() -> Option<ArgAction> {
     None
 }
 
-// enables us to parse an Option<ArgAction> when setting `deserialize_with`
-fn deserialize_option_action<'de, D>(de: D) -> Result<Option<ArgAction>, D::Error>
+fn deserialize_action<'de, D>(de: D) -> Result<Option<ArgAction>, D::Error>
 where
     D: Deserializer<'de>,
 {
-    #[derive(Default)]
     struct ActionVisitor;
 
     impl<'de> Visitor<'de> for ActionVisitor {
@@ -414,45 +446,7 @@ where
         where
             E: serde::de::Error,
         {
-            Ok(None)
-        }
-
-        fn visit_some<D>(self, de: D) -> Result<Self::Value, D::Error>
-        where
-            D: Deserializer<'de>,
-        {
-            Ok(Some(deserialize_action(de)?))
-        }
-
-        fn visit_unit<E>(self) -> Result<Self::Value, E>
-        where
-            E: serde::de::Error,
-        {
-            Ok(None)
-        }
-    }
-
-    de.deserialize_any(ActionVisitor::default())
-}
-
-fn deserialize_action<'de, D>(de: D) -> Result<ArgAction, D::Error>
-where
-    D: Deserializer<'de>,
-{
-    struct ActionVisitor;
-
-    impl<'de> Visitor<'de> for ActionVisitor {
-        type Value = ArgAction;
-
-        fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
-            write!(formatter, "expected string with value `set`, `append`, `set_true`, `set_false`, `count`, `help`, `help_short`, `help_long`, `version`")
-        }
-
-        fn visit_none<E>(self) -> Result<Self::Value, E>
-        where
-            E: serde::de::Error,
-        {
-            Ok(ArgAction::Set)
+            Ok(Some(ArgAction::Set))
         }
 
         fn visit_str<E>(self, v: &str) -> Result<Self::Value, E>
@@ -460,15 +454,15 @@ where
             E: serde::de::Error,
         {
             match v {
-                "set" => Ok(ArgAction::Set),
-                "append" => Ok(ArgAction::Append),
-                "set_true" => Ok(ArgAction::SetTrue),
-                "set_false" => Ok(ArgAction::SetFalse),
-                "count" => Ok(ArgAction::Count),
-                "help" => Ok(ArgAction::Help),
-                "help_short" => Ok(ArgAction::HelpShort),
-                "help_long" => Ok(ArgAction::HelpLong),
-                "version" => Ok(ArgAction::Version),
+                "set" => Ok(Some(ArgAction::Set)),
+                "append" => Ok(Some(ArgAction::Append)),
+                "set_true" => Ok(Some(ArgAction::SetTrue)),
+                "set_false" => Ok(Some(ArgAction::SetFalse)),
+                "count" => Ok(Some(ArgAction::Count)),
+                "help" => Ok(Some(ArgAction::Help)),
+                "help_short" => Ok(Some(ArgAction::HelpShort)),
+                "help_long" => Ok(Some(ArgAction::HelpLong)),
+                "version" => Ok(Some(ArgAction::Version)),
                 _ => Err(serde::de::Error::custom("unknown action type provided")),
             }
         }
@@ -476,12 +470,6 @@ where
 
     let av = ActionVisitor {};
     de.deserialize_str(av)
-}
-
-impl ConfigArg {
-    pub fn arg_type(&self) -> ConfigArgType {
-        self.arg_type
-    }
 }
 
 impl TryFrom<Config> for ConfigArg {
@@ -528,7 +516,7 @@ impl TryFrom<ConfigArg> for Arg {
             .with_some(value.hide_env_values, Arg::hide_env_values)
             .with_some(value.hide_short_help, Arg::hide_short_help)
             .with_some(value.hide_long_help, Arg::hide_long_help)
-            .action(value.action)
+            .with_some(value.action, Arg::action)
             .with_some(value.raw, Arg::raw);
         // at group
 
