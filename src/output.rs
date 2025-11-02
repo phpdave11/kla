@@ -1,6 +1,6 @@
 use std::pin::Pin;
 
-use crate::{impl_opt, impl_when, ContextBuilder, FetchMany, Result};
+use crate::{impl_opt, impl_when, ContextBuilder, Expand, FetchMany, Result};
 use reqwest::{Request, Response};
 use tera::Tera;
 use tokio::{
@@ -41,7 +41,7 @@ impl OutputBuilder {
     pub async fn opt_output(mut self, output: Option<&String>) -> Result<Self> {
         self.output = match output.map(|v| v.as_str()) {
             Some("-") => Box::pin(stdout()),
-            Some(output) => Box::pin(File::create_new(output).await?),
+            Some(output) => Box::pin(File::create_new(output.shell_expansion()).await?),
             None => Box::pin(stdout()),
         };
         Ok(self)
@@ -56,7 +56,7 @@ impl OutputBuilder {
     pub async fn opt_prelude_output(mut self, output: Option<&String>) -> Result<Self> {
         self.prelude_output = match output.map(|v| v.as_str()) {
             Some("-") => Some(Box::pin(stdout())),
-            Some(output) => Some(Box::pin(File::create_new(output).await?)),
+            Some(output) => Some(Box::pin(File::create_new(output.shell_expansion()).await?)),
             None => None,
         };
         Ok(self)

@@ -132,11 +132,16 @@ struct ConfigCommand {
     query: Vec<ConfigKV>,
     #[serde(rename = "form", default)]
     form: Vec<ConfigKV>,
+
+    // these are utilized by OutputBuilder
     #[serde(rename = "template", skip)]
-    // these are utilized by output
     _template: Option<String>,
-    #[serde(rename = "failure_template", skip)]
-    _failure_template: Option<String>,
+    #[serde(rename = "template_failure", skip)]
+    _template_failure: Option<String>,
+    #[serde(rename = "output", skip)]
+    _output: Option<String>,
+    #[serde(rename = "output_failure", skip)]
+    _output_failure: Option<String>,
 }
 
 impl ConfigCommand {

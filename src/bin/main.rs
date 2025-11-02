@@ -46,6 +46,7 @@ Run a template which lists authors
         .arg(arg!(-t --template <TEMPLATE> "The template to use when formating the output. prepending with @ will read a file."))
         .arg(arg!(--"failure-template" <TEMPLATE> "The template to use when formating the failure output. prepending with @ will read a file."))
         .arg(arg!(-o --output <FILE> "The file to write the output into"))
+        .arg(arg!(--"output-failure" <FILE> "Where any failure will be written out to"))
         .arg(arg!(--timeout <SECONDS> "The amount of time allotted for the request to finish"))
         .arg(arg!(--"basic-auth" <BASIC_AUTH> "The username and password seperated by :, a preceding @ denotes a file path."))
         .arg(arg!(--"bearer-token" <BEARER_TOKEN> "The bearer token to use in requests. A preceding @ denotes a file path."))
@@ -382,7 +383,7 @@ async fn run_run<S: Into<String>>(
     output.opt_template(
             match succeed {
                 true => tmpl_config.get_string("template").ok(),
-                false => tmpl_config.get_string("failure_template").ok(),
+                false => tmpl_config.get_string("template_failure").ok(),
             }.as_ref()
         )
         .with_context(|| format!("Your request was sent but the output or failure-template within environment {:?} template {} could not be parsed, run with -v to see if your request was successful", env.name(), &template))?
@@ -391,7 +392,15 @@ async fn run_run<S: Into<String>>(
             false => args.get_one("failure-template"),
         })
         .with_context(|| format!("Your request was sent but the --template or --failure-template could not be parsed, run with -v to see if your request was successful"))?
-        .opt_output(args.get_one("output"))
+        .opt_output(match succeed {
+                true => tmpl_config.get_string("output").ok(),
+                false => tmpl_config.get_string("output_failure").ok().or(tmpl_config.get_string("output").ok())
+            }.as_ref())
+            .await.with_context(|| format!("could not set --output from environment {:?} template {}", env.name(), &template))?
+        .opt_output(match succeed {
+            true => args.get_one("output"),
+            false => args.get_one("output-failure").or(args.get_one("output")),
+        })
         .await.with_context(|| format!("could not set --output"))?
         .when(verbose, |builder| builder.response_prelude(&response))
         .render(response)
