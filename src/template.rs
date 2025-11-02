@@ -106,7 +106,7 @@ pub trait FetchMany {
     fn fetch_with_prefix<'a>(
         &'a self,
         prefix: &'a str,
-        context: &Context,
+        context: &'a Context,
     ) -> impl Iterator<Item = RenderGroup<'a>>;
 }
 
@@ -122,7 +122,7 @@ impl FetchMany for Tera {
     fn fetch_with_prefix<'a>(
         &'a self,
         prefix: &'a str,
-        context: &Context,
+        context: &'a Context,
     ) -> impl Iterator<Item = RenderGroup<'a>> {
         self.get_template_names()
             .filter(move |tmpl| tmpl.starts_with(prefix))
@@ -130,7 +130,7 @@ impl FetchMany for Tera {
                 name: f.strip_prefix(prefix).unwrap_or(f).into(),
                 tmpl_name: f.into(),
                 tmpl: self,
-                context: context.clone(),
+                context: context,
             })
     }
 }
@@ -138,10 +138,15 @@ impl FetchMany for Tera {
 /// A RenderGroup has all the context required to render a template held within
 /// a Tera object.
 pub struct RenderGroup<'a> {
+    /// the basename of the template, this is the name used when turning this
+    /// into a key value
     pub name: String,
+    /// the name of the template in Tera
     pub tmpl_name: String,
+    /// Tera, where this thing is held
     pub tmpl: &'a Tera,
-    pub context: Context,
+    /// context is the context to render
+    pub context: &'a Context,
 }
 
 impl<'a> RenderGroup<'a> {

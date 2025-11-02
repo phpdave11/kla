@@ -285,7 +285,7 @@ async fn run_run<S: Into<String>>(
 
     let context = Context::new().template_args(&tmpl_config, &tmpl_m)?;
 
-    let tmpl = Tera::default().with_kla_template(&tmpl_config)?;
+    let tmpl = Tera::default().with_kla_template(&tmpl_config, &context)?;
     let client = args_client(&m)?.build()?;
     let url = env.create_url(
         &tmpl

@@ -104,6 +104,8 @@ pub struct ConfigKV {
     pub name: String,
     #[serde(rename = "value")]
     pub value: String,
+    #[serde(rename = "when")]
+    pub when: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -305,7 +307,7 @@ impl TemplateArgsContext for Context {
 
 pub trait KlaTemplateConfig: Sized {
     type Error;
-    fn with_kla_template(self, conf: &Config) -> Result<Self, Self::Error>;
+    fn with_kla_template(self, conf: &Config, context: &Context) -> Result<Self, Self::Error>;
     fn opt_template<S: AsRef<str>>(
         self,
         name: &str,
@@ -317,9 +319,9 @@ pub trait KlaTemplateConfig: Sized {
 impl KlaTemplateConfig for Tera {
     type Error = crate::Error;
 
-    fn with_kla_template(self, conf: &Config) -> Result<Self, Self::Error> {
+    fn with_kla_template(self, conf: &Config, context: &Context) -> Result<Self, Self::Error> {
         let config: ConfigCommand = conf.clone().try_deserialize()?;
-        let mut context = self
+        let mut tmpl = self
             .opt_template("body", config.body)?
             .template(
                 "uri",
@@ -333,19 +335,42 @@ impl KlaTemplateConfig for Tera {
                     .as_str(),
             )?;
 
+        macro_rules! when {
+            ($item:expr) => {
+                $item
+                    .when
+                    .as_ref()
+                    .map(|v| Tera::one_off(&v, context, true).map(|s| s.len() > 0))
+                    .unwrap_or(Ok(true))
+                    .context(format!(
+                        "could not parse `when` for {} {}",
+                        stringify!($item),
+                        $item.name
+                    ))
+            };
+        }
+
         for header in &config.header {
-            context = context.template(&format!("header.{}", header.name), &header.value)?;
+            // if when is None, or the string value is greater than 0, we are good
+            // to go.
+            if when!(header)? {
+                tmpl = tmpl.template(&format!("header.{}", header.name), &header.value)?;
+            }
         }
 
-        for header in &config.query {
-            context = context.template(&format!("query.{}", header.name), &header.value)?;
+        for query in &config.query {
+            if when!(query)? {
+                tmpl = tmpl.template(&format!("query.{}", query.name), &query.value)?;
+            }
         }
 
-        for header in &config.form {
-            context = context.template(&format!("form.{}", header.name), &header.value)?;
+        for form in &config.form {
+            if when!(form)? {
+                tmpl = tmpl.template(&format!("form.{}", form.name), &form.value)?;
+            }
         }
 
-        Ok(context)
+        Ok(tmpl)
     }
 
     fn opt_template<'a, S: AsRef<str>>(
