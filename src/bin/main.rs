@@ -19,27 +19,13 @@ use tokio::sync::OnceCell;
 
 static DEFAULT_ENV: OnceCell<OsString> = OnceCell::const_new();
 
+static ROOT_ABOUT: &'static str = include_str!("txt/root_about.txt");
+static RUN_ABOUT: &'static str = include_str!("txt/run_about.txt");
+
 fn command() -> Command {
     command!()
         .arg_required_else_help(true)
-        .long_about("
-▖▖▖ ▄▖
-▙▘▌ ▌▌
-▌▌▙▖▛▌
-
-Kla is a CLI tool that whos goal is to make it easy to interact with HTTP APIs. Instead of scowering the internet for the appropriate arguments to make a curl call, you can instead just pass a few arguments to the terminal and get things done. A Few examples!
-
-Examples: 
-
-Make a post to your ntfy server
-> kla post /my_scope 'your cron job finished successfully'
-
-Delete an elasticsearch index
-> kla delete /logs-20251011
-
-Run a template which lists authors
-> kla --env poetry run authors
-            ")
+        .long_about(ROOT_ABOUT)
         .subcommand_required(false)
         .arg(arg!(--agent <AGENT> "The header agent string").default_value("kla"))
         .arg(arg!(-e --env <ENVIRONMENT> "The environment we will run the request against").required(false).default_value_if_some(DEFAULT_ENV.get().map(|v| v.as_os_str())))
@@ -205,6 +191,7 @@ async fn run() -> Result<(), anyhow::Error> {
         .subcommand(
             Command::new("run")
                 .about("run templates defined for the environment")
+                .long_about(RUN_ABOUT)
                 .alias("template")
                 .arg(arg!(template: [template] "The template you want to run"))
                 .allow_external_subcommands(true)
@@ -270,6 +257,7 @@ async fn run_run<S: Into<String>>(
         .subcommand(
             Command::new("run")
                 .about("run templates defined for the environment")
+                .long_about(RUN_ABOUT)
                 .alias("template")
                 .subcommand((&tmpl_config).command_with_name(&template).with_context(|| format!("environment {:?} with tempalte {} could not be rendered as command, is something wrong with the template?", env.name(), &template))?),
         )
@@ -419,6 +407,7 @@ fn run_run_empty(args: &ArgMatches, conf: &Config) -> Result<(), anyhow::Error> 
 
     let mut m = Command::new("run")
         .about("run templates defined for the environment")
+        .long_about(RUN_ABOUT)
         .alias("template")
         .arg_required_else_help(true);
     let templates = env.templates().with_context(|| {

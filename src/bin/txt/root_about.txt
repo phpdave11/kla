@@ -1,0 +1,29 @@
+▖▖▖ ▄▖
+▙▘▌ ▌▌
+▌▌▙▖▛▌
+
+Kla is a CLI tool that whos goal is to make it easy to interact with HTTP APIs. Instead of scowering the internet for the appropriate arguments to make a curl call, you can instead just pass a few arguments to the terminal and get things done. A Few examples!
+
+Examples: 
+
+Make a post to your ntfy server
+> kla post /my_scope 'your cron job finished successfully'
+
+Delete an elasticsearch index
+> kla delete /logs-20251011
+
+Run a template which lists authors
+> kla --env poetry run authors
+
+Make a request to a fully qualified endpoint, ignoring the current environment
+> kla get http://example.com/ubuntu.iso -o /Downloads/ubuntu.iso
+
+The root command within kla expects 1 to 3 arguments. It uses these arguments to construct an http request.
+
+- A single argument will be a path `kla [path]`
+- Two arguments are the method and path `kla [method] [path]`
+- Three arguments are method, path and body `kla [method] [path] [body]`
+
+The request utilizes the current \"environmnent\" which can be selected with `kla switch`. Environments are defined in your config file.
+
+If you make a request often enough it's time to make a template. See `kla run --help` for more information.
