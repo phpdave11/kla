@@ -99,7 +99,11 @@ impl OutputBuilder {
 
     pub fn body_prelude(mut self, req: &Request) -> Self {
         if let Some(b) = req.body() {
-            self.prelude.push(format!("{:?}", b));
+            match b.as_bytes().map(|v| str::from_utf8(v)) {
+                Some(Ok(s)) => self.prelude.push(format!("Request Body:\n{}", s)),
+                Some(Err(_)) => self.prelude.push("Request Body: binary body".into()),
+                None => (),
+            };
         }
         self
     }
