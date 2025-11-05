@@ -8,37 +8,36 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  build_and_release:
+  build_release_linux_x86_64:
     runs-on: ubuntu-latest
 
     steps:
       - uses: actions/checkout@v4
       - run: rustup update
-      - run: mkdir -p "target/release"
-      - run: apt install gcc-aarch64-linux-gnu
-
-      # build x86_64-unknown-linux-gnu
-      - run: rustup target add x86_64-unknown-linux-gnu
-      - run: cargo build --release --target x86_64-unknown-linux-gnu
-      - run: mv target/x86_64-unknown-linux-gnu/release/kla "target/release/kla-x86_64-unknown-linux-gnu-${{ github.event.release.tag_name }}"
-
-      # build aarch64-unknown-linux-gnu
-      - run: rustup target add aarch64-unknown-linux-gnu
-      - run: cargo build --release --target aarch64-unknown-linux-gnu
-      - run: mv target/aarch64-unknown-linux-gnu/release/kla "target/release/kla-aarch64-unknown-linux-gnu-${{ github.event.release.tag_name }}"
-
-      # build x86_64-apple-darwin
-      - run: rustup target add x86_64-apple-darwin
-      - run: cargo build --release --target x86_64-apple-darwin
-      - run: mv target/x86_64-apple-darwin/release/kla "target/release/kla-x86_64-apple-darwin-${{ github.event.release.tag_name }}"
-
-      # build aarch64-apple-darwin
-      - run: rustup target add aarch64-apple-darwin
-      - run: cargo build --release --target aarch64-apple-darwin
-      - run: mv target/aarch64-apple-darwin/release/kla "target/release/kla-aarch64-apple-darwin-${{ github.event.release.tag_name }}"
-
+      - run: cargo build --release
       - uses: actions/upload-artifact@v4
         with:
-          name: "kla-${{ github.event.release.tag_name }}"
-          path: "target/*/release/kla-*-${{ github.event.release.tag_name }}"
+          name: "kla-x86_64-${{ github.event.release.tag_name }}"
+          path: "target/release/kla"
           if-no-files-found: error
+
+      # build aarch64-unknown-linux-gnu
+      # - run: rustup target add aarch64-unknown-linux-gnu
+      # - run: cargo build --release --target aarch64-unknown-linux-gnu
+      # - run: mv target/aarch64-unknown-linux-gnu/release/kla "target/release/kla-aarch64-unknown-linux-gnu-${{ github.event.release.tag_name }}"
+
+      # # build x86_64-apple-darwin
+      # - run: rustup target add x86_64-apple-darwin
+      # - run: cargo build --release --target x86_64-apple-darwin
+      # - run: mv target/x86_64-apple-darwin/release/kla "target/release/kla-x86_64-apple-darwin-${{ github.event.release.tag_name }}"
+
+      # # build aarch64-apple-darwin
+      # - run: rustup target add aarch64-apple-darwin
+      # - run: cargo build --release --target aarch64-apple-darwin
+      # - run: mv target/aarch64-apple-darwin/release/kla "target/release/kla-aarch64-apple-darwin-${{ github.event.release.tag_name }}"
+
+      # - uses: actions/upload-artifact@v4
+      #   with:
+      #     name: "kla-${{ github.event.release.tag_name }}"
+      #     path: "target/*/release/kla-*-${{ github.event.release.tag_name }}"
+      #     if-no-files-found: error
