@@ -14,7 +14,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - run: rustup update
-      - run: mkdir "target/release"
+      - run: mkdir -p "target/release"
 
       # build x86_64-unknown-linux-gnu
       - run: rustup target add x86_64-unknown-linux-gnu
