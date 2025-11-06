@@ -1,5 +1,8 @@
 name: deploy
 
+permissions:
+  contents: write
+
 on:
   push:
     tags:
@@ -30,8 +33,23 @@ jobs:
           path: "target/release/kla"
           if-no-files-found: error
 
-      # - uses: actions/upload-artifact@v4
-      #   with:
-      #     name: "kla-${{ github.event.release.tag_name }}"
-      #     path: "target/*/release/kla-*-${{ github.event.release.tag_name }}"
-      #     if-no-files-found: error
+  publish_release:
+    runs-on: ubuntu-latest
+    needs: build_bin # waits for all matrix builds to finish
+    if: github.ref_type == 'tag' # only run when this workflow was triggered by a tag push
+    steps:
+      - name: Download all build artifacts
+        # omit 'name' to download ALL artifacts created by previous job(s)
+        uses: actions/download-artifact@v4
+
+      - name: List files (debug)
+        run: |
+          echo "cwd: $(pwd)"
+          find . -maxdepth 3 -type f -print
+
+      - name: Create or update GitHub release and upload assets
+        uses: softprops/action-gh-release@v2
+        with:
+          # newline-separated globs — upload any kla binary found in downloaded artifact dirs
+          files: |
+            **/kla
