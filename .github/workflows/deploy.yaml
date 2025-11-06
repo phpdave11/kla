@@ -18,8 +18,8 @@ jobs:
             arch: aarch64-apple
           - image: macos-15-intel
             arch: x86_64-apple
-    runs-on: "${{ matrix.image }}"
 
+    runs-on: "${{ matrix.image }}"
     steps:
       - uses: actions/checkout@v4
       - run: rustup update
