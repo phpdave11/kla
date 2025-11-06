@@ -27,10 +27,11 @@ jobs:
       - uses: actions/checkout@v4
       - run: rustup update
       - run: cargo build --release
+      - run: mv "target/release/kla" "target/release/kla-${{ matrix.builds.arch }}-${{ github.ref_name }}"
       - uses: actions/upload-artifact@v4
         with:
           name: "kla-${{ matrix.builds.arch }}-${{ github.ref_name }}"
-          path: "target/release/kla"
+          path: "target/release/kla-${{ matrix.builds.arch }}-${{ github.ref_name }}"
           if-no-files-found: error
 
   publish_release:
@@ -52,4 +53,4 @@ jobs:
         with:
           # newline-separated globs — upload any kla binary found in downloaded artifact dirs
           files: |
-            **/kla
+            **/kla-*
