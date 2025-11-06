@@ -39,7 +39,7 @@ pub trait Ok: Sized {
     /// result of the value will bubble out to the call.
     ///
     /// example:
-    /// ```rust
+    /// ```compile_fail
     /// command!().with_ok_value(Ok("something"), Command::about);
     /// ```
     fn with_ok_value<T, F>(self, v: Result<T, Self::Error>, f: F) -> Result<Self, Self::Error>
