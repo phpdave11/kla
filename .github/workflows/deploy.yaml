@@ -19,14 +19,14 @@ jobs:
           - image: macos-15-intel
             arch: x86_64-apple
 
-    runs-on: "${{ matrix.image }}"
+    runs-on: "${{ matrix.builds.image }}"
     steps:
       - uses: actions/checkout@v4
       - run: rustup update
       - run: cargo build --release
       - uses: actions/upload-artifact@v4
         with:
-          name: "kla-${{ matrix.arch }}-${{ github.event.release.tag_name }}"
+          name: "kla-${{ matrix.builds.arch }}-${{ github.ref_name }}"
           path: "target/release/kla"
           if-no-files-found: error
 
