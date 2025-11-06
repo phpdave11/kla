@@ -26,6 +26,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - run: rustup update
+      - run: cargo install set-cargo-version
+      - run: set-cargo-version ./Cargo.toml ${{ github.ref_name }} # Example using branch name as version
       - run: cargo build --release
       - run: mv "target/release/kla" "target/release/kla-${{ matrix.builds.arch }}-${{ github.ref_name }}"
       - uses: actions/upload-artifact@v4
