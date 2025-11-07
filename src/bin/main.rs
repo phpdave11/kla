@@ -69,7 +69,7 @@ fn command() -> Command {
             Command::new("switch")
             .about("Select an environment to be the current context")
             .alias("context")
-            .arg(arg!(matcher: [Matcher] "A regex statement to filter down matches").required(false).default_value(".*"))
+            .arg(arg!(matcher: [Matcher] "A regex statement to filter down matches, (if we only match one value it's selected)").required(false).default_value(".*"))
         )
 }
 
@@ -481,6 +481,7 @@ fn run_switch(args: &ArgMatches, conf: &Config) -> Result<(), anyhow::Error> {
         .into_iter()
         .filter_map(|(k, v)| if r.is_match(&k) { Some((k, v)) } else { None });
 
+    let mut num_entries = 0;
     for (name, val) in environments {
         let mut endpoint: Endpoint = val
             .try_deserialize()
@@ -488,19 +489,35 @@ fn run_switch(args: &ArgMatches, conf: &Config) -> Result<(), anyhow::Error> {
         endpoint.name = name;
         let endpoint: Arc<dyn SkimItem> = Arc::new(endpoint);
         send.send(endpoint).unwrap();
+
+        num_entries += 1;
     }
 
     let options = SkimOptionsBuilder::default()
         .preview(Some(String::from("right")))
         .build()?;
 
-    let selected = Skim::run_with(&options, Some(recv))
-        .filter(|f| !f.is_abort)
-        .map(|v| v.selected_items)
-        .into_iter()
-        .flatten()
-        .next()
-        .map(|v| v.text().to_string());
+    let selected = match num_entries {
+        0 => {
+            return Err(anyhow::Error::msg(format!(
+                "no environments exist that match your filter: {}",
+                r
+            )))
+        }
+        1 => Some(
+            recv.recv()
+                .context("could not recieve environment from channel")?
+                .text()
+                .to_string(),
+        ),
+        _ => Skim::run_with(&options, Some(recv))
+            .filter(|f| !f.is_abort)
+            .map(|v| v.selected_items)
+            .into_iter()
+            .flatten()
+            .next()
+            .map(|v| v.text().to_string()),
+    };
 
     let environment_file = conf
         .get_string("default.environment")
@@ -508,12 +525,13 @@ fn run_switch(args: &ArgMatches, conf: &Config) -> Result<(), anyhow::Error> {
         .expect("default value");
 
     if let Some(selected) = selected {
-        fs::write(&environment_file, selected).with_context(|| {
+        fs::write(&environment_file, &selected).with_context(|| {
             format!(
                 "could not write current environment file to {}",
                 &environment_file
             )
         })?;
+        println!("Switched to environment {}", &selected)
     }
 
     Ok(())
