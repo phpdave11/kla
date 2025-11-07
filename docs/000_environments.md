@@ -28,3 +28,15 @@ You can then run `kla switch example` to select example as your environment.
 You might not totally remember what you named the environment, and that is OK. Running `kla switch` without an argument will bring up a fuzzy finder to help find the right environment.
 
 <sub>_If you only have one environment it will be auto selected</sub>
+
+## Seeing your environments
+
+You can see all of your current environments with `kla environments`.
+
+## Explicitly specifying your environment
+
+You can be explicit about what environment you want to be running as with the `--env` flag
+
+```
+kla --env poetry /authors
+```
