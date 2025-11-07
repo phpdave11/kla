@@ -1,3 +1,5 @@
+# CLI Usage
+
 Kla intends to make interacting with HTTP APIs as easy as possible. There are multiple examples of documentation specifying shorthand http requests that look something like this:
 
 > Create a notification:

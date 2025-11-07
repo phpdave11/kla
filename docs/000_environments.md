@@ -1,3 +1,5 @@
+# Environments 
+
 Kla is built around environments. When using `curl` you need to specify a fully qualified domain and uri to pull down what you want.
 
 ```bash
