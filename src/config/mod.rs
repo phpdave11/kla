@@ -1,8 +1,9 @@
-use std::fs::{self, DirEntry};
+mod merge_children;
+pub use merge_children::*;
 
 use anyhow::Context as _;
 use clap::{command, Arg, ArgAction, ArgMatches, Command};
-use config::{builder::DefaultState, Config, ConfigBuilder, ConfigError, File, FileFormat};
+use config::{builder::DefaultState, Config, ConfigBuilder};
 use inquire::Password;
 use serde::{de::Visitor, Deserialize, Deserializer};
 use tera::{Context, Number, Tera};
@@ -10,92 +11,7 @@ use tera::{Context, Number, Tera};
 use crate::{
     impl_opt,
     opt::{Ok, Opt},
-    Expand,
 };
-
-/// MergeChildren allos us to add the merge_children function which enables us to
-/// create a new config object from children defined within the config itself
-pub trait MergeChildren: Sized {
-    fn merge_children(self, path: &str) -> Result<Self, ConfigError>;
-}
-
-impl MergeChildren for Config {
-    /// merge_children searches through the config object for a `config` attribute
-    /// This attribute is expected to be an array of tables with the value `path`
-    /// or `dir`. In the event both are given an error is returned. In the even neither
-    /// is given an error is returned.
-    ///
-    /// example Toml
-    ///
-    /// ```toml
-    /// # valid
-    /// [[config]]
-    ///   path = "/etc/kla/second_file.toml"
-    ///
-    /// # valid
-    /// [[config]]
-    ///   dir = "/etc/kla/config.d"
-    ///
-    /// # invalid
-    /// [[config]]
-    ///   dir = "/etc/kla/config.d"
-    ///   path = "/etc/kla/second_file.toml"
-    ///
-    /// # invalid
-    /// [[config]]
-    ///   my_random_attribute = "something"
-    /// ```
-    fn merge_children(self, path: &str) -> Result<Self, ConfigError> {
-        let mut builder = Config::builder();
-
-        let path = match self.get_array(path) {
-            Ok(path) => path,
-            Err(ConfigError::NotFound(_)) => return Ok(self),
-            Err(err) => return Err(err),
-        };
-
-        for c in path {
-            let c = c.into_table()?;
-            if let (Some(_), Some(_)) = (c.get("path"), c.get("dir")) {
-                return Err(ConfigError::Message(format!(
-                    "config must have only `path` or `dir` property set! You set both"
-                )));
-            } else if let Some(path) = c.get("path") {
-                // for some reason it takes ownership :(
-                let path = path
-                    .clone()
-                    .into_string()
-                    .context(format!("could not read file {}", path))
-                    .map_err(|e| ConfigError::Foreign(e.into()))?
-                    .shell_expansion();
-
-                builder = builder.add_source(File::new(&path, FileFormat::Toml));
-            } else if let Some(dir) = c.get("dir") {
-                let dir = dir.clone().into_string()?;
-                let dir = fs::read_dir(dir.as_str().shell_expansion())
-                    .context(format!("could not read directory {}", dir))
-                    .map_err(|e| ConfigError::Foreign(e.into()))?
-                    .collect::<std::result::Result<Vec<DirEntry>, std::io::Error>>()
-                    .context(format!("could not read directory {}", dir))
-                    .map_err(|e| ConfigError::Foreign(e.into()))?
-                    .into_iter()
-                    .filter(|f| f.file_type().map(|v| v.is_file()).unwrap_or(false));
-
-                for entry in dir {
-                    let path = entry.path();
-                    let path = path.as_os_str().to_string_lossy();
-                    builder = builder.add_source(File::new(path.as_ref(), FileFormat::Toml));
-                }
-            } else {
-                return Err(ConfigError::Message(format!(
-                    "config must have a `path` or `dir` property set!"
-                )));
-            }
-        }
-
-        builder.add_source(self).build()
-    }
-}
 
 // HeaderConfig defines the values in the config needed to create a header
 #[derive(Deserialize)]
@@ -109,7 +25,7 @@ pub struct ConfigKV {
 }
 
 #[derive(Deserialize)]
-struct ConfigCommand {
+pub struct ConfigCommand {
     #[serde(skip)]
     pub name: String,
 
@@ -392,8 +308,11 @@ impl KlaTemplateConfig for Tera {
 
 #[derive(Deserialize, Copy, Clone)]
 enum ConfigArgType {
+    #[serde(rename = "string")]
     String,
+    #[serde(rename = "number")]
     Number,
+    #[serde(rename = "bool")]
     Bool,
 }
 
@@ -481,10 +400,12 @@ struct ConfigArg {
     password: bool,
 }
 
+/// arg_action_default sets the default value of arg actions
 fn arg_action_default() -> Option<ArgAction> {
     None
 }
 
+/// deserialize_action is used to deserialize the ArgAction.
 fn deserialize_action<'de, D>(de: D) -> Result<Option<ArgAction>, D::Error>
 where
     D: Deserializer<'de>,
@@ -528,6 +449,7 @@ where
     de.deserialize_str(av)
 }
 
+/// Implementation of turning a Config object into a ConfigArg
 impl TryFrom<Config> for ConfigArg {
     type Error = crate::Error;
 
@@ -537,6 +459,8 @@ impl TryFrom<Config> for ConfigArg {
     }
 }
 
+/// Implementation of turining a ConfigArg into an Argument for
+/// clap.
 impl TryFrom<ConfigArg> for Arg {
     type Error = crate::Error;
 

@@ -46,7 +46,7 @@ help = "View a document"
   short = 'd'
   name = "delete"
   # we default to a string, but this is a bool
-  type = "Bool"
+  type = "bool"
   # when the flag is present we want the value to be true
   action = "set_true"
 ```
@@ -76,13 +76,13 @@ body = """
   long = "delete"
   short = 'd'
   name = "delete"
-  type = "Bool"
+  type = "bool"
   action = "set_true"
 
 [[arg]]
   long = "force"
   name = "force"
-  type = "Bool"
+  type = "bool"
   # notice the default is a string!
   default = "false"
   action = "set_true"
@@ -157,10 +157,10 @@ A Very long description, though this one isn't
   name = "varname"
 
   # Type specifies the type of value we expect, valid values are
-  # - String (default when not present)
-  # - Number
-  # - Bool
-  type = "String"
+  # - string (default when not present)
+  # - number
+  # - bool
+  type = "string"
 
   # Boolean specifying if this is a list of arguments, or a single argument
   many_valued = false
@@ -292,8 +292,8 @@ text
   # the time you weant to set a value, but there are other things you can do
   # - set: (default) set the argument to a value
   # - append: Append to the current argument
-  # - set_true: when `type = Bool` this sets the value to true
-  # - set_false: when `type = Bool` this sets the value to false
+  # - set_true: when `type = bool` this sets the value to true
+  # - set_false: when `type = bool` this sets the value to false
   # - count: Increment a counter as the value
   # - help: output the help command
   # - help_short: output the short help command

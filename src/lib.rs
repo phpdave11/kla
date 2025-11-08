@@ -5,7 +5,7 @@ mod opt;
 mod output; // managing the output of kla
 mod request; // traits and impl for extending request and requestbuilder
 mod sigv4;
-mod template; // templating responses
+mod tera; // templating responses
 
 use std::env;
 
@@ -16,7 +16,7 @@ pub use opt::*;
 pub use output::*;
 pub use request::*;
 pub use sigv4::*;
-pub use template::*;
+pub use tera::*;
 
 // extending the functionality of our dependancies
 pub mod clap;

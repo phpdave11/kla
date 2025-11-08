@@ -40,10 +40,10 @@ A Very long description, though this one isn't
   name = "varname"
 
   # Type specifies the type of value we expect, valid values are
-  # - String (default when not present)
-  # - Number
-  # - Bool
-  type = "String"
+  # - string (default when not present)
+  # - number
+  # - bool
+  type = "string"
 
   # Boolean specifying if this is a list of arguments, or a single argument
   many_valued = false
@@ -175,8 +175,8 @@ text
   # the time you weant to set a value, but there are other things you can do
   # - set: (default) set the argument to a value
   # - append: Append to the current argument
-  # - set_true: when `type = Bool` this sets the value to true
-  # - set_false: when `type = Bool` this sets the value to false
+  # - set_true: when `type = bool` this sets the value to true
+  # - set_false: when `type = bool` this sets the value to false
   # - count: Increment a counter as the value
   # - help: output the help command
   # - help_short: output the short help command

@@ -8,7 +8,7 @@ use kla::{
     clap::DefaultValueIfSome,
     config::{CommandWithName, KlaTemplateConfig, MergeChildren, TemplateArgsContext},
     Endpoint, Environment, Expand, FetchMany, FromEnvironment, KlaClientBuilder, KlaRequestBuilder,
-    OptRender, OutputBuilder, Sigv4Request, When, WithEnvironment,
+    OutputBuilder, Sigv4Request, When, WithEnvironment,
 };
 use log::error;
 use regex::Regex;
@@ -287,7 +287,12 @@ async fn run_run<S: Into<String>>(
     let method = Method::try_from(method.as_str())
         .with_context(|| format!("{} is not a valid method", &method))?;
     let body = tmpl
-        .render_some("body", &context)
+        .render("body", &context)
+        .map(|v| Some(v))
+        .or_else(|err| match err.kind {
+            tera::ErrorKind::TemplateNotFound(_) => Ok(None),
+            _ => Err(err),
+        })
         .with_context(|| format!("could not render body template"))?;
 
     let request = client
