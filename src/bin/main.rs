@@ -6,7 +6,7 @@ use config::{Config, File, FileFormat};
 use http::Method;
 use kla::{
     clap::DefaultValueIfSome,
-    config::{CommandWithName, KlaTemplateConfig, MergeChildren, TemplateArgsContext},
+    config::{ConfigCommand, MergeChildren},
     Endpoint, Environment, Expand, FetchMany, FromEnvironment, KlaClientBuilder, KlaRequestBuilder,
     OutputBuilder, Sigv4Request, When, WithEnvironment,
 };
@@ -249,7 +249,7 @@ async fn run_run<S: Into<String>>(
         })?
         .build()
     {
-        Ok(tmpl_config) => tmpl_config,
+        Ok(tmpl_config) => ConfigCommand::with_name(&template, tmpl_config)?,
         Err(_) => return run_run_empty(args, conf),
     };
 
@@ -259,21 +259,28 @@ async fn run_run<S: Into<String>>(
                 .about("run templates defined for the environment")
                 .long_about(RUN_ABOUT)
                 .alias("template")
-                .subcommand((&tmpl_config).command_with_name(&template).with_context(|| format!("environment {:?} with tempalte {} could not be rendered as command, is something wrong with the template?", env.name(), &template))?),
+                .subcommand(Command::try_from(tmpl_config.clone())?),
         )
         .get_matches();
 
-    let tmpl_m = m
-        .subcommand()
-        .expect("only run in run")
-        .1
-        .subcommand()
-        .expect("only run with template")
-        .1;
+    let mut context = Context::new();
+    context.extend(
+        tmpl_config
+            .args_context(
+                m.subcommand()
+                    .expect("only run in run")
+                    .1
+                    .subcommand()
+                    .expect("only run with template")
+                    .1,
+            )
+            .context("Invalid Arguments supplied")?,
+    );
 
-    let context = Context::new().template_args(&tmpl_config, &tmpl_m)?;
+    let mut tmpl = Tera::default();
+    tmpl.add_raw_templates(tmpl_config.templates(&context)?)
+        .context("invalid template")?;
 
-    let tmpl = Tera::default().with_kla_template(&tmpl_config, &context)?;
     let client = args_client(&m)?.build()?;
     let url = env.create_url(
         &tmpl
@@ -375,9 +382,9 @@ async fn run_run<S: Into<String>>(
 
     output.opt_template(
             match succeed {
-                true => tmpl_config.get_string("template").ok(),
-                false => tmpl_config.get_string("template_failure").ok(),
-            }.as_ref()
+                true => tmpl_config.template.as_ref(),
+                false => tmpl_config.template_failure.as_ref(),
+            }
         )
         .with_context(|| format!("Your request was sent but the output or failure-template within environment {:?} template {} could not be parsed, run with -v to see if your request was successful", env.name(), &template))?
         .opt_template(match succeed {
@@ -386,9 +393,9 @@ async fn run_run<S: Into<String>>(
         })
         .with_context(|| format!("Your request was sent but the --template or --failure-template could not be parsed, run with -v to see if your request was successful"))?
         .opt_output(match succeed {
-                true => tmpl_config.get_string("output").ok(),
-                false => tmpl_config.get_string("output_failure").ok().or(tmpl_config.get_string("output").ok())
-            }.as_ref())
+                true => tmpl_config.output.as_ref(),
+                false => tmpl_config.output_failure.as_ref().or(tmpl_config.output.as_ref())
+            })
             .await.with_context(|| format!("could not set --output from environment {:?} template {}", env.name(), &template))?
         .opt_output(match succeed {
             true => args.get_one("output"),
@@ -426,19 +433,10 @@ fn run_run_empty(args: &ArgMatches, conf: &Config) -> Result<(), anyhow::Error> 
     for template in templates {
         let tmpl_conf = Config::builder()
             .add_source_environment(&env, &template)
-            .with_context(|| {
-                format!(
-                    "could not load {} for environment {:?}",
-                    &template,
-                    env.name()
-                )
-            })?
-            .build()?;
-        m = m.subcommand(tmpl_conf
-                .command_with_name(&template)
-                .with_context(|| format!("environment {:?} with tempalte {} could not be rendered as command, is something wrong with the template?", env.name(), &template)
-                )?
-            );
+            .and_then(|b| Ok(b.build()?))
+            .and_then(|conf| ConfigCommand::with_name(&template, conf))
+            .with_context(|| format!("environment {:?} with tempalte {} could not be rendered as command, is something wrong with the template?", env.name(), &template))?;
+        m = m.subcommand(Command::try_from(tmpl_conf)?);
     }
 
     command().subcommand(m).get_matches();
