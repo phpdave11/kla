@@ -12,7 +12,10 @@ use reqwest::{ClientBuilder, Request, RequestBuilder};
 use serde::Deserialize;
 use skim::SkimItem;
 
-use crate::{Error, Expand, Result, Sigv4Request};
+use crate::{
+    url_builder::{AssumingURLBuilder, OptBaseURLBuilder},
+    Error, Expand, Result, Sigv4Request,
+};
 
 #[derive(Debug)]
 pub enum Environment {
@@ -44,10 +47,10 @@ impl Environment {
         }
     }
 
-    pub fn create_url(&self, uri: &str) -> String {
+    pub fn url_builder(&self) -> OptBaseURLBuilder {
         match self {
-            Environment::Endpoint(endpoint) => endpoint.create_url(uri),
-            Environment::Empty => String::from(uri),
+            Environment::Endpoint(endpoint) => OptBaseURLBuilder::from(endpoint.url_builder()),
+            Environment::Empty => OptBaseURLBuilder::empty(),
         }
     }
 
@@ -120,16 +123,8 @@ impl Endpoint {
         Ok(endpoint)
     }
 
-    pub fn create_url(&self, uri: &str) -> String {
-        // if the uri starts with http or https scheme we assume the uri is
-        // a url
-        if uri.starts_with("http://") || uri.starts_with("https://") {
-            return String::from(uri);
-        }
-
-        let mut url = self.prefix.clone();
-        url.push_str(uri.trim_start_matches("/"));
-        url
+    pub fn url_builder(&self) -> AssumingURLBuilder {
+        AssumingURLBuilder::from(&self.prefix)
     }
 
     // template_dir returns the directory for the given environment

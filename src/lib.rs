@@ -4,7 +4,9 @@ mod opt;
 mod output; // managing the output of kla
 mod reqwest;
 mod sigv4;
+mod template;
 mod tera; // templating responses
+mod url_builder;
 
 use std::env;
 
@@ -15,6 +17,7 @@ pub use output::*;
 pub use reqwest::*;
 pub use sigv4::*;
 pub use tera::*;
+pub use url_builder::*;
 
 // extending the functionality of our dependancies
 pub mod clap;

@@ -8,7 +8,7 @@ use kla::{
     clap::DefaultValueIfSome,
     config::{ConfigCommand, MergeChildren},
     Endpoint, Environment, Expand, FetchMany, FromEnvironment, KlaClientBuilder, KlaRequestBuilder,
-    Opt, OutputBuilder, Sigv4Request, When, WithEnvironment,
+    Opt, OutputBuilder, Sigv4Request, URLBuilder, When, WithEnvironment,
 };
 use log::error;
 use regex::Regex;
@@ -301,11 +301,11 @@ async fn run_run<S: Into<String>>(
                     .to_uppercase()
                     .as_str(),
             )?,
-            env.create_url(
+            env.url_builder().build(
                 &tmpl
                     .render("uri", &context)
                     .with_context(|| format!("could not render uri template"))?,
-            ),
+            )?,
         )
         .with_some(
             tmpl.render("body", &context)
@@ -588,7 +588,7 @@ async fn run_root(args: &ArgMatches, conf: &Config) -> Result<(), anyhow::Error>
         )
     };
 
-    let url = env.create_url(uri);
+    let url = env.url_builder().build(uri)?;
     let client = args_client(args)?.with_environment(&env).await?.build()?;
 
     let request = client
