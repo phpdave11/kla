@@ -8,11 +8,11 @@ use kla::{
     clap::DefaultValueIfSome,
     config::{ConfigCommand, MergeChildren},
     Endpoint, Environment, Expand, FetchMany, FromEnvironment, KlaClientBuilder, KlaRequestBuilder,
-    OutputBuilder, Sigv4Request, When, WithEnvironment,
+    Opt, OutputBuilder, Sigv4Request, When, WithEnvironment,
 };
 use log::error;
 use regex::Regex;
-use reqwest::{ClientBuilder, Response};
+use reqwest::{ClientBuilder, RequestBuilder, Response};
 use skim::{prelude::SkimOptionsBuilder, Skim, SkimItem};
 use tera::{Context, Tera};
 use tokio::sync::OnceCell;
@@ -224,6 +224,7 @@ async fn run_run<S: Into<String>>(
         .map(|v| *v)
         .unwrap_or_default();
 
+    // Get the name of the template
     let template: String = match template.map(|s| s.into()) {
         None => return run_run_empty(args, conf),
         Some(template) if template == "help" => return run_run_empty(args, conf),
@@ -231,6 +232,7 @@ async fn run_run<S: Into<String>>(
         Some(template) => template,
     };
 
+    // Get the environment
     let env = Environment::new(args.get_one("env"), conf).with_context(|| {
         format!(
             "could not load environment: {:?}",
@@ -238,6 +240,7 @@ async fn run_run<S: Into<String>>(
         )
     })?;
 
+    // Get the configuration for the template in the environment
     let tmpl_config = match Config::builder()
         .add_source_environment(&env, &template)
         .with_context(|| {
@@ -253,6 +256,8 @@ async fn run_run<S: Into<String>>(
         Err(_) => return run_run_empty(args, conf),
     };
 
+    // Run the command parsing for the template again, this will make actually
+    // parse things with the configured arguments etc
     let m = command()
         .subcommand(
             Command::new("run")
@@ -263,6 +268,8 @@ async fn run_run<S: Into<String>>(
         )
         .get_matches();
 
+    // Create the context from the values of arguments. We want to grab the
+    // specific submatches from the runcommand template
     let mut context = Context::new();
     context.extend(
         tmpl_config
@@ -277,35 +284,39 @@ async fn run_run<S: Into<String>>(
             .context("Invalid Arguments supplied")?,
     );
 
+    // Create a new Templating engine for the configured template
     let mut tmpl = Tera::default();
     tmpl.add_raw_templates(tmpl_config.templates(&context)?)
         .context("invalid template")?;
 
+    // Create a new http client
     let client = args_client(&m)?.build()?;
-    let url = env.create_url(
-        &tmpl
-            .render("uri", &context)
-            .with_context(|| format!("could not render uri template"))?,
-    );
-    let method = tmpl
-        .render("method", &context)
-        .with_context(|| format!("could not render method template"))?
-        .to_uppercase();
-    let method = Method::try_from(method.as_str())
-        .with_context(|| format!("{} is not a valid method", &method))?;
-    let body = tmpl
-        .render("body", &context)
-        .map(|v| Some(v))
-        .or_else(|err| match err.kind {
-            tera::ErrorKind::TemplateNotFound(_) => Ok(None),
-            _ => Err(err),
-        })
-        .with_context(|| format!("could not render body template"))?;
 
+    // Create the http request
     let request = client
-        .request(method.clone(), &url)
-        .opt_body(body.as_ref())
-        .with_context(|| format!("could not set body: {:?}", body.as_ref()))?
+        .request(
+            Method::try_from(
+                tmpl.render("method", &context)
+                    .with_context(|| format!("could not render method template"))?
+                    .to_uppercase()
+                    .as_str(),
+            )?,
+            env.create_url(
+                &tmpl
+                    .render("uri", &context)
+                    .with_context(|| format!("could not render uri template"))?,
+            ),
+        )
+        .with_some(
+            tmpl.render("body", &context)
+                .map(|v| Some(v))
+                .or_else(|err| match err.kind {
+                    tera::ErrorKind::TemplateNotFound(_) => Ok(None),
+                    _ => Err(err),
+                })
+                .with_context(|| format!("could not render body template"))?,
+            RequestBuilder::body,
+        )
         .opt_headers(m.get_many("header"))
         .with_context(|| format!("could not set header: {:?}", m.get_many::<String>("header")))?
         .opt_headers(Some(tmpl.fetch_with_prefix("header.", &context)))

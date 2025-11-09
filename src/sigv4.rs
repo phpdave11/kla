@@ -1,5 +1,6 @@
 use std::{fmt::Display, ops::Deref, str::FromStr, time::SystemTime};
 
+use aws_config::BehaviorVersion;
 use chrono::{DateTime, Utc};
 use http::{
     header::{self, ToStrError},
@@ -7,7 +8,8 @@ use http::{
 };
 use reqwest::Request;
 
-use aws_credential_types::Credentials;
+use anyhow::Context as _;
+use aws_credential_types::{provider::ProvideCredentials, Credentials};
 use aws_sigv4::{
     http_request::{
         sign, PayloadChecksumKind, SignableBody, SignableRequest,
@@ -15,6 +17,8 @@ use aws_sigv4::{
     },
     sign::v4::{self, signing_params::BuildError},
 };
+
+use crate::Opt;
 
 #[derive(thiserror::Error, Debug)]
 /// SigningError will be returned from the builder when any issues arise
@@ -236,6 +240,51 @@ impl SigV4Builder {
                 .query_pairs_mut()
                 .append_pair(param.0, param.1.as_ref());
         }
+
+        Ok(req)
+    }
+}
+
+// enable http reqwests to be signed
+pub trait Sigv4Request {
+    fn sign_request(
+        self,
+        profile: Option<&String>,
+        service: Option<&String>,
+    ) -> impl std::future::Future<Output = Result<Request, anyhow::Error>> + Send;
+}
+
+impl Sigv4Request for Request {
+    async fn sign_request(
+        self,
+        profile: Option<&String>,
+        service: Option<&String>,
+    ) -> Result<Request, anyhow::Error> {
+        let config = aws_config::ConfigLoader::default()
+            .behavior_version(BehaviorVersion::latest())
+            .with_some(profile, aws_config::ConfigLoader::profile_name)
+            .load()
+            .await;
+
+        let credentials = config
+            .credentials_provider()
+            .ok_or(anyhow::Error::msg("AWS credentials not found"))?
+            .provide_credentials()
+            .await
+            .context("could not fetch credentials")?;
+
+        let req = SigV4Builder::new()
+            .date(SystemTime::now())
+            .region(config.region().map(|r| r.to_string()).unwrap_or_default())
+            .service(
+                service
+                    .map(|s| s.as_str())
+                    .unwrap_or("execute-api")
+                    .to_string(),
+            )
+            .credentials(credentials)
+            .sign(self)
+            .context("Could not sign request")?;
 
         Ok(req)
     }

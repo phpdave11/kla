@@ -1,21 +1,18 @@
-use anyhow::Context;
-use aws_config::BehaviorVersion;
-use aws_credential_types::provider::ProvideCredentials as _;
 use duration_string::DurationString;
 use http::Version;
 use reqwest::{
     header::{HeaderMap, HeaderName, HeaderValue},
-    Body, Request, RequestBuilder,
+    Body, RequestBuilder,
 };
+use std::str::FromStr;
 use std::{
     collections::HashMap,
     fs,
     io::{self, Read},
     time::Duration,
 };
-use std::{str::FromStr, time::SystemTime};
 
-use crate::{Error, Opt, RenderGroup, Result, SigV4Builder};
+use crate::{impl_opt, Error, RenderGroup, Result};
 
 #[derive(Debug, Clone)]
 /// KeyValue enables you to turn a string like `key=value` into an actual key value
@@ -263,46 +260,4 @@ impl KlaRequestBuilder for RequestBuilder {
     }
 }
 
-pub trait Sigv4Request {
-    fn sign_request(
-        self,
-        profile: Option<&String>,
-        service: Option<&String>,
-    ) -> impl std::future::Future<Output = Result<Request>> + Send;
-}
-
-impl Sigv4Request for Request {
-    async fn sign_request(
-        self,
-        profile: Option<&String>,
-        service: Option<&String>,
-    ) -> Result<Request> {
-        let config = aws_config::ConfigLoader::default()
-            .behavior_version(BehaviorVersion::latest())
-            .with_some(profile, aws_config::ConfigLoader::profile_name)
-            .load()
-            .await;
-
-        let credentials = config
-            .credentials_provider()
-            .ok_or(anyhow::Error::msg("AWS credentials not found"))?
-            .provide_credentials()
-            .await
-            .context("could not fetch credentials")?;
-
-        let req = SigV4Builder::new()
-            .date(SystemTime::now())
-            .region(config.region().map(|r| r.to_string()).unwrap_or_default())
-            .service(
-                service
-                    .map(|s| s.as_str())
-                    .unwrap_or("execute-api")
-                    .to_string(),
-            )
-            .credentials(credentials)
-            .sign(self)
-            .context("Could not sign request")?;
-
-        Ok(req)
-    }
-}
+impl_opt!(RequestBuilder);
