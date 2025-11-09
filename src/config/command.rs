@@ -96,11 +96,13 @@ impl ConfigCommand {
                     .as_ref()
                     .map(|v| tera::Tera::one_off(&v, context, true).map(|s| s.len() > 0))
                     .unwrap_or(Ok(true))
-                    .context(format!(
-                        "could not parse `when` for {} {}",
-                        stringify!($item),
-                        $item.name
-                    ))
+                    .with_context(|| {
+                        format!(
+                            "could not parse `when` for {} {}",
+                            stringify!($item),
+                            $item.name
+                        )
+                    })
             };
         }
 
@@ -236,7 +238,7 @@ impl TryFrom<ConfigCommand> for Command {
                     .collect::<Result<Vec<Arg>, Self::Error>>(),
                 Command::args,
             )
-            .context(format!("{} invalid command configuration", &value.name))?;
+            .with_context(|| format!("{} invalid command configuration", &value.name))?;
 
         Ok(command)
     }

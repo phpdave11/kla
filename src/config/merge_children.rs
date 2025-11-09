@@ -57,7 +57,7 @@ impl MergeChildren for Config {
                 let path = path
                     .clone()
                     .into_string()
-                    .context(format!("could not read file {}", path))
+                    .with_context(|| format!("could not read file {}", path))
                     .map_err(|e| ConfigError::Foreign(e.into()))?
                     .shell_expansion();
 
@@ -65,10 +65,10 @@ impl MergeChildren for Config {
             } else if let Some(dir) = c.get("dir") {
                 let dir = dir.clone().into_string()?;
                 let dir = fs::read_dir(dir.as_str().shell_expansion())
-                    .context(format!("could not read directory {}", dir))
+                    .with_context(|| format!("could not read directory {}", dir))
                     .map_err(|e| ConfigError::Foreign(e.into()))?
                     .collect::<std::result::Result<Vec<DirEntry>, std::io::Error>>()
-                    .context(format!("could not read directory {}", dir))
+                    .with_context(|| format!("could not read directory {}", dir))
                     .map_err(|e| ConfigError::Foreign(e.into()))?
                     .into_iter()
                     .filter(|f| f.file_type().map(|v| v.is_file()).unwrap_or(false));

@@ -1,20 +1,18 @@
-mod client; // traits and impl for extending client builder and client
 mod environment; // environment struct and logic
 mod error; // package error handling
 mod opt;
 mod output; // managing the output of kla
-mod request; // traits and impl for extending request and requestbuilder
+mod reqwest;
 mod sigv4;
 mod tera; // templating responses
 
 use std::env;
 
-pub use client::*;
 pub use environment::*;
 pub use error::*;
 pub use opt::*;
 pub use output::*;
-pub use request::*;
+pub use reqwest::*;
 pub use sigv4::*;
 pub use tera::*;
 
