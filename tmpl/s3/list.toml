@@ -1,0 +1,24 @@
+short_description = "List objects in an S3 bucket"
+description = """
+List objects in an S3 bucket with an optional prefix.
+Equivalent to: aws s3 ls s3://mybucket/ or aws s3 ls s3://mybucket/prefix/
+
+Usage:
+  kla --env s3 run list mybucket
+  kla --env s3 run list mybucket logs/
+  kla --env s3 run list mybucket data/2024/11/
+"""
+
+# Use virtual-hosted-style URL for S3
+uri = "https://{{ bucket }}.s3.amazonaws.com/?list-type=2{% if prefix %}&prefix={{ prefix }}{% endif %}&delimiter=/"
+method = "GET"
+
+[[arg]]
+name = "bucket"
+help = "The S3 bucket name"
+required = true
+
+[[arg]]
+name = "prefix"
+help = "Optional key prefix to filter results (e.g., 'folder/' or 'path/to/objects/')"
+required = false

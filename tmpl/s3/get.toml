@@ -1,0 +1,24 @@
+short_description = "Get an S3 object and print to stdout"
+description = """
+Retrieve an S3 object and print its contents to stdout.
+Equivalent to: aws s3 cp s3://bucket/key -
+
+Usage:
+  kla --env s3 run get mybucket test.txt
+  kla --env s3 run get mybucket path/to/file.json
+  kla --env s3 run get mybucket logs/2024/app.log
+"""
+
+# Use virtual-hosted-style URL for S3
+uri = "https://{{ bucket }}.s3.amazonaws.com/{{ key }}"
+method = "GET"
+
+[[arg]]
+name = "bucket"
+help = "The S3 bucket name"
+required = true
+
+[[arg]]
+name = "key"
+help = "The object key (path) to retrieve"
+required = true

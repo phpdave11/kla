@@ -1,0 +1,10 @@
+# AWS S3 environment configuration
+[environment.s3]
+url = "https://s3.amazonaws.com/"
+short_description = "AWS S3 object storage"
+template_dir = "./tmpl/s3"
+# Enable AWS SigV4 signing for authenticated requests
+sigv4 = true
+sigv4_aws_service = "s3"
+# Optional: specify AWS profile if not using default
+# sigv4_aws_profile = "default"

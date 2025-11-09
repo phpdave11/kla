@@ -1,0 +1,46 @@
+short_description = "Put an object to S3"
+description = """
+Upload an object to S3.
+
+Equivalent to: aws s3 cp localfile s3://bucket/key
+
+Usage:
+  # From a file (using command substitution)
+  kla --env s3 run put mybucket test.txt "$(cat test.txt)"
+
+  # Literal string
+  kla --env s3 run put mybucket test.txt "hello world"
+
+  # JSON data
+  kla --env s3 run put mybucket data.json '{"key":"value"}'
+
+  # Multi-line data
+  kla --env s3 run put mybucket config.json "$(cat <<'EOF'
+  {
+    "setting": "value"
+  }
+  EOF
+  )"
+"""
+
+# Use virtual-hosted-style URL for S3
+uri = "https://{{ bucket }}.s3.amazonaws.com/{{ key }}"
+method = "PUT"
+
+# The body uses the content argument
+body = "{{ content }}"
+
+[[arg]]
+name = "bucket"
+help = "The S3 bucket name"
+required = true
+
+[[arg]]
+name = "key"
+help = "The object key (path) where the file will be stored"
+required = true
+
+[[arg]]
+name = "content"
+help = "Content to upload (use shell command substitution for files, e.g., \"$(cat file.txt)\")"
+required = true

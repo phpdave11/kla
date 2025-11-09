@@ -31,3 +31,8 @@ environment = ".default-environment"
 [[config]]
 dir = "conf.d/"
 
+# Load user's personal config from ~/.config/kla/config.toml if it exists
+# This allows overriding environments without modifying the repo
+[[config]]
+path = "~/.config/kla/config.toml"
+

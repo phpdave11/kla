@@ -1,0 +1,11 @@
+short_description = "List all S3 buckets"
+description = """
+List all S3 buckets in your account.
+Equivalent to: aws s3 ls
+
+Usage: kla --env s3 run lb
+"""
+
+# List all buckets - uses the root S3 endpoint
+uri = "/"
+method = "GET"
