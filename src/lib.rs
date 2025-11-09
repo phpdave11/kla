@@ -4,7 +4,6 @@ mod opt;
 mod output; // managing the output of kla
 mod reqwest;
 mod sigv4;
-mod template;
 mod tera; // templating responses
 mod url_builder;
 
