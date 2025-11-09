@@ -5,7 +5,7 @@ use inquire::Password;
 use serde::{de::Visitor, Deserialize, Deserializer};
 use tera::{Context, Number};
 
-use crate::{Ok, Opt};
+use crate::{Ok, Opt, RenderGroup};
 
 #[derive(Deserialize, Clone, Debug)]
 pub struct ConfigCommand {
@@ -67,6 +67,11 @@ pub struct ConfigKV {
 }
 
 impl ConfigCommand {
+    /// filter_when filters the when clause in the ConfigKV
+    pub fn filter_when(&self, tmpl: &RenderGroup<'_>) -> bool {
+        todo!()
+    }
+
     pub fn with_name<S: Into<String>, C: TryInto<Self, Error = crate::Error>>(
         name: S,
         conf: C,
@@ -76,10 +81,7 @@ impl ConfigCommand {
         Ok(cmd)
     }
 
-    pub fn templates<'a>(
-        &'a self,
-        context: &tera::Context,
-    ) -> crate::Result<Vec<(String, &'a String)>> {
+    pub fn templates<'a>(&'a self) -> crate::Result<Vec<(String, &'a String)>> {
         let mut templates: Vec<(String, &'a String)> = vec![];
 
         if let Some(body) = self.body.as_ref() {
@@ -89,41 +91,16 @@ impl ConfigCommand {
         templates.push(("uri".into(), &self.uri));
         templates.push(("method".into(), &self.method));
 
-        macro_rules! when {
-            ($item:expr) => {
-                $item
-                    .when
-                    .as_ref()
-                    .map(|v| tera::Tera::one_off(&v, context, true).map(|s| s.len() > 0))
-                    .unwrap_or(Ok(true))
-                    .with_context(|| {
-                        format!(
-                            "could not parse `when` for {} {}",
-                            stringify!($item),
-                            $item.name
-                        )
-                    })
-            };
-        }
-
         for header in &self.header {
-            // if when is None, or the string value is greater than 0, we are good
-            // to go.
-            if when!(header)? {
-                templates.push((format!("header.{}", header.name), &header.value));
-            }
+            templates.push((format!("header.{}", header.name), &header.value));
         }
 
         for query in &self.query {
-            if when!(query)? {
-                templates.push((format!("query.{}", query.name), &query.value));
-            }
+            templates.push((format!("query.{}", query.name), &query.value));
         }
 
         for form in &self.form {
-            if when!(form)? {
-                templates.push((format!("form.{}", form.name), &form.value));
-            }
+            templates.push((format!("form.{}", form.name), &form.value));
         }
 
         Ok(templates)

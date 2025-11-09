@@ -16,6 +16,7 @@ pub use opt::*;
 pub use output::*;
 pub use reqwest::*;
 pub use sigv4::*;
+pub use template::*;
 pub use tera::*;
 pub use url_builder::*;
 

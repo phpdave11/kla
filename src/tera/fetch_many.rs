@@ -37,7 +37,6 @@ impl FetchMany for Tera {
     }
 }
 
-// TODO: This RenderGroup stuff isn't needed, we don't need to defer execution until later
 /// A RenderGroup has all the context required to render a template held within
 /// a Tera object.
 pub struct RenderGroup<'a> {

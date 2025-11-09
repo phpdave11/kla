@@ -1,0 +1,287 @@
+use anyhow::Context as _;
+use clap::ArgMatches;
+use http::Method;
+use reqwest::{Client, RequestBuilder, Response};
+use tera::{Context, Tera};
+
+use crate::config::ConfigCommand;
+use crate::{
+    Environment, Error, FetchMany as _, KlaRequestBuilder, Opt, OutputBuilder, Result,
+    Sigv4Request, URLBuilder, When, WithEnvironment,
+};
+
+#[derive(Clone, Debug, Default)]
+/// Template Builder is used to create a new template. Required fields are
+/// - config, set through `Self::config` or `Self::try_config`
+/// - client, set through `Self::client`
+/// Everything else is optional.
+pub struct TemplateBuilder {
+    /// config specifies the configCommand for this template.
+    config: Option<ConfigCommand>,
+    /// Optional
+    client: Option<Client>,
+    /// Optional context that serves as the base context we will render out of
+    /// arguments.
+    context: Option<Context>,
+}
+
+impl TemplateBuilder {
+    /// New Creates a new template builder. It just calls `default`
+    /// which returns an empty builder. You are still required to add
+    /// - ConfigCommand
+    /// - Client
+    /// before calling `build`
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// config sets the configuration for the template. This field is
+    /// required to call build, so please call some variation of it
+    pub fn config<C: Into<ConfigCommand>>(mut self, config: C) -> Self {
+        self.config = Some(config.into());
+        self
+    }
+
+    /// try_config trys to sets the configuration based on the TryInto trait
+    /// The error must implement Into<kla::Error>. config is required so call
+    /// this or config!
+    pub fn try_config<E: Into<Error>, C: TryInto<ConfigCommand, Error = E>>(
+        mut self,
+        config: C,
+    ) -> Result<Self> {
+        self.config = Some(config.try_into().map_err(E::into)?);
+        Ok(self)
+    }
+
+    /// client sets the client for the request. Any settings the client may have
+    /// set _could_ be overloaded by the template itself if specified. To ensure your
+    /// settings are utilized grab a mutable reference to the client from the Template
+    /// instead and apply your settings to that. Consider anything you place here as
+    /// "default" settings.
+    pub fn client(mut self, c: Client) -> Self {
+        self.client = Some(c);
+        self
+    }
+    /// context sets the context we will build upon. This is not required, and we will
+    /// call Context::default() when not provided. The context is often derived through
+    /// `[[arg]]` via the template. So anything provided here is just additional sugar.
+    pub fn context<A: Into<Context>>(mut self, context: A) -> Self {
+        self.context = Some(context.into());
+        self
+    }
+
+    /// try_context is the same as context, but uses the TryInto trait instead of Into.
+    /// the Error returned in your TryInto must implement Into<kla::Error>
+    pub fn try_context<E: Into<crate::Error>, A: TryInto<Context, Error = E>>(
+        mut self,
+        context: A,
+    ) -> Result<Self> {
+        self.context = Some(context.try_into().map_err(E::into)?);
+        Ok(self)
+    }
+
+    /// build the template
+    pub fn build(self) -> Result<Template> {
+        let Self {
+            config,
+            client,
+            context,
+        } = self;
+
+        let config =
+            config.ok_or_else(|| anyhow::Error::msg("config is required to create a template!"))?;
+        let client =
+            client.ok_or_else(|| anyhow::Error::msg("client is required to create a template!"))?;
+        let mut tmpl = Tera::default();
+        tmpl.add_raw_templates(config.templates()?)
+            .context("invalid template")?;
+
+        let context = context.unwrap_or_else(|| Context::default());
+
+        Ok(Template {
+            client,
+            tmpl,
+            context,
+            config,
+        })
+    }
+}
+
+#[derive(Clone, Debug)]
+/// Template is a runnable template which takes an environment and a set of arguments
+/// to run
+pub struct Template {
+    client: Client,
+    tmpl: Tera,
+    context: Context,
+    config: ConfigCommand,
+}
+
+impl Template {
+    pub async fn run(&self, env: &Environment, args: &ArgMatches) -> Result<()> {
+        let verbose = args
+            .get_one::<bool>("verbose")
+            .map(|v| *v)
+            .unwrap_or_default();
+
+        let mut context = self.context.clone();
+        context.extend(
+            self.config
+                .args_context(args)
+                .context("Invalid Arguments Supplied")?,
+        );
+
+        // TODO: Think through these, they should be applied in the following order
+        // - Environment specific configuration
+        // - Template specific configuration
+        // - argMatch specific configuration
+        // Environnment and Template should be hidden behind a single implementation
+        // see `with_environment` trait, do the same for template
+        // Only arg level should be specified here.
+        let request = self
+            .client
+            .request(
+                Method::try_from(
+                    self.tmpl
+                        .render("method", &context)
+                        .with_context(|| format!("could not render method template"))?
+                        .to_uppercase()
+                        .as_str(),
+                )?,
+                env.url_builder().build(
+                    &self
+                        .tmpl
+                        .render("uri", &context)
+                        .with_context(|| format!("could not render uri template"))?,
+                )?,
+            )
+            .with_environment(&env)
+            .await?
+            .with_some(
+                self.tmpl
+                    .render("body", &context)
+                    .map(|v| Some(v))
+                    .or_else(|err| match err.kind {
+                        tera::ErrorKind::TemplateNotFound(_) => Ok(None),
+                        _ => Err(err),
+                    })
+                    .with_context(|| format!("could not render body template"))?,
+                RequestBuilder::body,
+            )
+            .opt_headers(args.get_many("header"))
+            .with_context(|| {
+                format!(
+                    "could not set header: {:?}",
+                    args.get_many::<String>("header")
+                )
+            })?
+            // TODO: Fix `when`. Now that we are defering to render templates until we
+            // actually call them we need to implement `when` here. Good call on RenderGroups
+            // previous paul, they are needed now.
+            // Implementation should add a filter which could be called with
+            // .filter(config.filterWhen)
+            .opt_headers(Some(
+                self.tmpl
+                    .fetch_with_prefix("header.", &context)
+                    .filter(|v| self.config.filter_when(v)),
+            ))
+            .with_context(|| format!("headers could not be loaded"))?
+            .opt_bearer_auth(args.get_one("bearer-token"))
+            .opt_basic_auth(args.get_one("basic-auth"))
+            .opt_query(args.get_many("query"))
+            .with_context(|| {
+                format!(
+                    "could not set query param: {:?}",
+                    args.get_many::<String>("query")
+                )
+            })?
+            .opt_query(Some(
+                self.tmpl
+                    .fetch_with_prefix("query.", &context)
+                    .filter(|v| self.config.filter_when(v)),
+            ))
+            .with_context(|| format!("query params could not be loaded",))?
+            .opt_form(args.get_many("form"))
+            .with_context(|| format!("could not set form: {:?}", args.get_many::<String>("form")))?
+            .opt_form(Some(
+                self.tmpl
+                    .fetch_with_prefix("form.", &context)
+                    .filter(|v| self.config.filter_when(v)),
+            ))
+            .with_context(|| format!("form params could not be loaded",))?
+            .opt_timeout(args.get_one("timeout"))
+            .with_context(|| {
+                format!(
+                    "{:?} is not a valid format",
+                    args.get_one::<String>("timeout")
+                )
+            })?
+            .opt_version(args.get_one("http-version"))
+            .with_context(|| {
+                format!(
+                    "{:?} is not a valid http-version",
+                    args.get_one::<String>("http-version")
+                )
+            })?
+            .build()
+            .context("could not build http request")?
+            .with_environment(env)
+            .await?;
+
+        let request = if args.get_one("sigv4").map(|v| *v).unwrap_or(false) {
+            request
+                .sign_request(
+                    args.get_one::<String>("sigv4-aws-profile"),
+                    args.get_one::<String>("sigv4-aws-service"),
+                )
+                .await?
+        } else {
+            request
+        };
+
+        let output =
+            OutputBuilder::new().when(verbose, |builder| builder.request_prelude(&request));
+
+        let response = match args.get_one("dry").map(|b| *b).unwrap_or_default() {
+            true => Response::from(http::Response::<Vec<u8>>::default()),
+            false => self
+                .client
+                .execute(request)
+                .await
+                .with_context(|| format!("request failed!"))?,
+        };
+
+        let succeed = response.status().is_success();
+
+        // TODO: This is shitty, and should be derived some other way. There should be
+        // an output type that is generated by the template, and the caller can decide
+        // how to use that thing. Likely an enum that specifies if it's raw data or a
+        // templated output
+        output.opt_template(
+            match succeed {
+                true => self.config.template.as_ref(),
+                false => self.config.template_failure.as_ref(),
+            }
+        )
+        .with_context(|| format!("Your request was sent but the output or failure-template within could not be parsed, run with -v to see if your request was successful"))?
+        .opt_template(match succeed {
+            true => args.get_one("template"),
+            false => args.get_one("failure-template"),
+        })
+        .with_context(|| format!("Your request was sent but the --template or --failure-template could not be parsed, run with -v to see if your request was successful"))?
+        .opt_output(match succeed {
+                true => self.config.output.as_ref(),
+                false => self.config.output_failure.as_ref().or(self.config.output.as_ref())
+            })
+            .await.with_context(|| format!("could not set --output"))?
+        .opt_output(match succeed {
+            true => args.get_one("output"),
+            false => args.get_one("output-failure").or(args.get_one("output")),
+        })
+        .await.with_context(|| format!("could not set --output"))?
+        .when(verbose, |builder| builder.response_prelude(&response))
+        .render(response)
+        .await.with_context(|| format!("could not write output to specified location!"))?;
+        Ok(())
+    }
+}
