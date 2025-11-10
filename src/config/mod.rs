@@ -3,3 +3,4 @@ pub use merge_children::*;
 
 mod command;
 pub use command::ConfigCommand;
+pub use command::FilterWhen;

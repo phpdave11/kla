@@ -4,7 +4,7 @@ use http::Method;
 use reqwest::{Client, RequestBuilder, Response};
 use tera::{Context, Tera};
 
-use crate::config::ConfigCommand;
+use crate::config::{ConfigCommand, FilterWhen as _};
 use crate::{
     Environment, Error, FetchMany as _, KlaRequestBuilder, Opt, OutputBuilder, Result,
     Sigv4Request, URLBuilder, When, WithEnvironment,
@@ -183,7 +183,13 @@ impl Template {
             .opt_headers(Some(
                 self.tmpl
                     .fetch_with_prefix("header.", &context)
-                    .filter(|v| self.config.filter_when(v)),
+                    .filter_map(|v| match self.config.header.filter_when(&v) {
+                        Ok(true) => Some(Ok(v)),
+                        Ok(false) => None,
+                        Err(err) => Some(Err(err)),
+                    })
+                    .collect::<Result<Vec<_>>>()?
+                    .into_iter(),
             ))
             .with_context(|| format!("headers could not be loaded"))?
             .opt_bearer_auth(args.get_one("bearer-token"))
@@ -198,7 +204,13 @@ impl Template {
             .opt_query(Some(
                 self.tmpl
                     .fetch_with_prefix("query.", &context)
-                    .filter(|v| self.config.filter_when(v)),
+                    .filter_map(|v| match self.config.query.filter_when(&v) {
+                        Ok(true) => Some(Ok(v)),
+                        Ok(false) => None,
+                        Err(err) => Some(Err(err)),
+                    })
+                    .collect::<Result<Vec<_>>>()?
+                    .into_iter(),
             ))
             .with_context(|| format!("query params could not be loaded",))?
             .opt_form(args.get_many("form"))
@@ -206,7 +218,13 @@ impl Template {
             .opt_form(Some(
                 self.tmpl
                     .fetch_with_prefix("form.", &context)
-                    .filter(|v| self.config.filter_when(v)),
+                    .filter_map(|v| match self.config.form.filter_when(&v) {
+                        Ok(true) => Some(Ok(v)),
+                        Ok(false) => None,
+                        Err(err) => Some(Err(err)),
+                    })
+                    .collect::<Result<Vec<_>>>()?
+                    .into_iter(),
             ))
             .with_context(|| format!("form params could not be loaded",))?
             .opt_timeout(args.get_one("timeout"))

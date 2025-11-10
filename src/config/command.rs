@@ -3,7 +3,7 @@ use clap::{command, Arg, ArgAction, ArgMatches, Command};
 use config::Config;
 use inquire::Password;
 use serde::{de::Visitor, Deserialize, Deserializer};
-use tera::{Context, Number};
+use tera::{Context, Number, Tera};
 
 use crate::{Ok, Opt, RenderGroup};
 
@@ -28,11 +28,11 @@ pub struct ConfigCommand {
     #[serde(rename = "method", default = "default_method")]
     method: String,
     #[serde(rename = "header", default)]
-    header: Vec<ConfigKV>,
+    pub(crate) header: Vec<ConfigKV>,
     #[serde(rename = "query", default)]
-    query: Vec<ConfigKV>,
+    pub(crate) query: Vec<ConfigKV>,
     #[serde(rename = "form", default)]
-    form: Vec<ConfigKV>,
+    pub(crate) form: Vec<ConfigKV>,
 
     // these are utilized by OutputBuilder
     #[serde(rename = "template", skip)]
@@ -66,12 +66,25 @@ pub struct ConfigKV {
     pub when: Option<String>,
 }
 
-impl ConfigCommand {
-    /// filter_when filters the when clause in the ConfigKV
-    pub fn filter_when(&self, tmpl: &RenderGroup<'_>) -> bool {
-        todo!()
-    }
+pub trait FilterWhen {
+    fn filter_when(&self, tmpl: &RenderGroup<'_>) -> crate::Result<bool>;
+}
 
+impl FilterWhen for Vec<ConfigKV> {
+    /// filter_when filters the when clause in the ConfigKV
+    fn filter_when(&self, tmpl: &RenderGroup<'_>) -> crate::Result<bool> {
+        self.iter()
+            .filter(|v| v.name == tmpl.name)
+            .next()
+            .map(|v| v.when.as_ref())
+            .flatten()
+            .map(|v| Tera::one_off(v, tmpl.context, true).map(|v| v != ""))
+            .unwrap_or(Ok(true))
+            .map_err(crate::Error::from)
+    }
+}
+
+impl ConfigCommand {
     pub fn with_name<S: Into<String>, C: TryInto<Self, Error = crate::Error>>(
         name: S,
         conf: C,

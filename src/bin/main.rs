@@ -7,14 +7,13 @@ use http::Method;
 use kla::{
     clap::DefaultValueIfSome,
     config::{ConfigCommand, MergeChildren},
-    Endpoint, Environment, Expand, FetchMany, FromEnvironment, KlaClientBuilder, KlaRequestBuilder,
-    Opt, OutputBuilder, Sigv4Request, TemplateBuilder, URLBuilder, When, WithEnvironment,
+    Endpoint, Environment, Expand, FromEnvironment, KlaClientBuilder, KlaRequestBuilder,
+    OutputBuilder, Sigv4Request, TemplateBuilder, URLBuilder, When, WithEnvironment,
 };
 use log::error;
 use regex::Regex;
-use reqwest::{ClientBuilder, RequestBuilder, Response};
+use reqwest::{ClientBuilder, Response};
 use skim::{prelude::SkimOptionsBuilder, Skim, SkimItem};
-use tera::{Context, Tera};
 use tokio::sync::OnceCell;
 
 static DEFAULT_ENV: OnceCell<OsString> = OnceCell::const_new();
