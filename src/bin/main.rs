@@ -7,14 +7,13 @@ use http::Method;
 use kla::{
     clap::DefaultValueIfSome,
     config::{ConfigCommand, MergeChildren},
-    Endpoint, Environment, Expand, FetchMany, FromEnvironment, KlaClientBuilder, KlaRequestBuilder,
-    Opt, OutputBuilder, Sigv4Request, URLBuilder, When, WithEnvironment,
+    Endpoint, Environment, Expand, FromEnvironment, KlaClientBuilder, KlaRequestBuilder,
+    OutputBuilder, Sigv4Request, TemplateBuilder, URLBuilder, When, WithEnvironment,
 };
 use log::error;
 use regex::Regex;
-use reqwest::{ClientBuilder, RequestBuilder, Response};
+use reqwest::{ClientBuilder, Response};
 use skim::{prelude::SkimOptionsBuilder, Skim, SkimItem};
-use tera::{Context, Tera};
 use tokio::sync::OnceCell;
 
 static DEFAULT_ENV: OnceCell<OsString> = OnceCell::const_new();
@@ -219,11 +218,6 @@ async fn run_run<S: Into<String>>(
     args: &ArgMatches,
     conf: &Config,
 ) -> Result<(), anyhow::Error> {
-    let verbose = args
-        .get_one::<bool>("verbose")
-        .map(|v| *v)
-        .unwrap_or_default();
-
     // Get the name of the template
     let template: String = match template.map(|s| s.into()) {
         None => return run_run_empty(args, conf),
@@ -268,155 +262,23 @@ async fn run_run<S: Into<String>>(
         )
         .get_matches();
 
-    // Create the context from the values of arguments. We want to grab the
-    // specific submatches from the runcommand template
-    let mut context = Context::new();
-    context.extend(
-        tmpl_config
-            .args_context(
-                m.subcommand()
-                    .expect("only run in run")
-                    .1
-                    .subcommand()
-                    .expect("only run with template")
-                    .1,
-            )
-            .context("Invalid Arguments supplied")?,
-    );
-
-    // Create a new Templating engine for the configured template
-    let mut tmpl = Tera::default();
-    tmpl.add_raw_templates(tmpl_config.templates(&context)?)
-        .context("invalid template")?;
-
-    // Create a new http client
-    let client = args_client(&m)?.build()?;
-
-    // Create the http request
-    let request = client
-        .request(
-            Method::try_from(
-                tmpl.render("method", &context)
-                    .with_context(|| format!("could not render method template"))?
-                    .to_uppercase()
-                    .as_str(),
-            )?,
-            env.url_builder().build(
-                &tmpl
-                    .render("uri", &context)
-                    .with_context(|| format!("could not render uri template"))?,
-            )?,
+    TemplateBuilder::new()
+        .client(args_client(&m)?.with_environment(&env).await?.build()?)
+        // TODO: This should be changed to try_config, and we shouldn't turn it into
+        // a ConfigCommand here, all that should be done inside the builder
+        // We will need to get the name in the config somehow
+        .config(tmpl_config.clone())
+        .build()?
+        .run(
+            &env,
+            m.subcommand()
+                .expect("only run in run")
+                .1
+                .subcommand()
+                .expect("only run with template")
+                .1,
         )
-        .with_some(
-            tmpl.render("body", &context)
-                .map(|v| Some(v))
-                .or_else(|err| match err.kind {
-                    tera::ErrorKind::TemplateNotFound(_) => Ok(None),
-                    _ => Err(err),
-                })
-                .with_context(|| format!("could not render body template"))?,
-            RequestBuilder::body,
-        )
-        .opt_headers(m.get_many("header"))
-        .with_context(|| format!("could not set header: {:?}", m.get_many::<String>("header")))?
-        .opt_headers(Some(tmpl.fetch_with_prefix("header.", &context)))
-        .with_context(|| {
-            format!(
-                "envrionment {:?} template {} headers could not be loaded",
-                env.name(),
-                &template
-            )
-        })?
-        .opt_bearer_auth(m.get_one("bearer-token"))
-        .opt_basic_auth(m.get_one("basic-auth"))
-        .opt_query(m.get_many("query"))
-        .with_context(|| {
-            format!(
-                "could not set query param: {:?}",
-                m.get_many::<String>("query")
-            )
-        })?
-        .opt_query(Some(tmpl.fetch_with_prefix("query.", &context)))
-        .with_context(|| {
-            format!(
-                "envrionment {:?} template {} query params could not be loaded",
-                env.name(),
-                &template
-            )
-        })?
-        .opt_form(m.get_many("form"))
-        .with_context(|| format!("could not set form: {:?}", m.get_many::<String>("form")))?
-        .opt_form(Some(tmpl.fetch_with_prefix("form.", &context)))
-        .with_context(|| {
-            format!(
-                "envrionment {:?} template {} form params could not be loaded",
-                env.name(),
-                &template
-            )
-        })?
-        .opt_timeout(m.get_one("timeout"))
-        .with_context(|| format!("{:?} is not a valid format", m.get_one::<String>("timeout")))?
-        .opt_version(m.get_one("http-version"))
-        .with_context(|| {
-            format!(
-                "{:?} is not a valid http-version",
-                m.get_one::<String>("http-version")
-            )
-        })?
-        .build()
-        .context("could not build http request")?
-        .with_environment(&env)
         .await?;
-
-    let request = if args.get_one("sigv4").map(|v| *v).unwrap_or(false) {
-        request
-            .sign_request(
-                args.get_one::<String>("sigv4-aws-profile"),
-                args.get_one::<String>("sigv4-aws-service"),
-            )
-            .await?
-    } else {
-        request
-    };
-
-    let output = OutputBuilder::new().when(verbose, |builder| builder.request_prelude(&request));
-
-    let response = match args.get_one("dry").map(|b| *b).unwrap_or_default() {
-        true => Response::from(http::Response::<Vec<u8>>::default()),
-        false => client
-            .execute(request)
-            .await
-            .with_context(|| format!("request failed!"))?,
-    };
-
-    let succeed = response.status().is_success();
-
-    output.opt_template(
-            match succeed {
-                true => tmpl_config.template.as_ref(),
-                false => tmpl_config.template_failure.as_ref(),
-            }
-        )
-        .with_context(|| format!("Your request was sent but the output or failure-template within environment {:?} template {} could not be parsed, run with -v to see if your request was successful", env.name(), &template))?
-        .opt_template(match succeed {
-            true => args.get_one("template"),
-            false => args.get_one("failure-template"),
-        })
-        .with_context(|| format!("Your request was sent but the --template or --failure-template could not be parsed, run with -v to see if your request was successful"))?
-        .opt_output(match succeed {
-                true => tmpl_config.output.as_ref(),
-                false => tmpl_config.output_failure.as_ref().or(tmpl_config.output.as_ref())
-            })
-            .await.with_context(|| format!("could not set --output from environment {:?} template {}", env.name(), &template))?
-        .opt_output(match succeed {
-            true => args.get_one("output"),
-            false => args.get_one("output-failure").or(args.get_one("output")),
-        })
-        .await.with_context(|| format!("could not set --output"))?
-        .when(verbose, |builder| builder.response_prelude(&response))
-        .render(response)
-        .await.with_context(|| format!("could not write output to specified location!"))?;
-
     Ok(())
 }
 
